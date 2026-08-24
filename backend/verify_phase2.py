@@ -164,6 +164,9 @@ def main() -> int:
             pages = max(1, -(-n // conversation.PAGE_SIZE))
             print("    %-14s %3d صنف -> %d صفحة" % (sub["slug"], n, pages))
 
+    # المسح يمر بتدفق الحجز فيكتب حالة للمستخدم الوهمي — ننظّفها.
+    db.client().table("user_state").delete().eq("user_id", "verify").execute()
+
     print("\n" + "=" * 56)
     print("النتيجة: %s" % ("نجح كل الفحوصات" if ok else "في فحوصات فاشلة"))
     print("=" * 56)

@@ -19,6 +19,7 @@ import functools
 import logging
 from datetime import date as Date
 
+import admin
 import ai
 import booking
 import config
@@ -136,6 +137,7 @@ def _screen_main(adapter, user, lang, greeting=False) -> None:
     adapter.send_buttons(user, text, [
         (texts.t(lang, "btn_menu"), "M"),
         (texts.t(lang, "btn_book"), "B"),
+        (texts.t(lang, "btn_my_bookings"), "R"),
         (texts.t(lang, "btn_info"), "I"),
         (texts.t(lang, "btn_switch_lang"), "X"),
     ])
@@ -325,6 +327,7 @@ def _finish_large_group(adapter, user, lang, data) -> None:
         day=day, hour=data["hour"], name=data["name"], phone=data["phone"],
         language=lang, group_type=data.get("group_type", ""),
         occasion=data.get("occasion", ""))
+    admin.notify_large_group(res)
     _save(user, state="main", data={})
     adapter.send_buttons(
         user,
@@ -342,7 +345,109 @@ def _ask_group_type(adapter, user, lang, data) -> None:
     ], nav=_cancel_nav(lang))
 
 
+# ------------------------------------------------- حجوزات الزبون (SPEC 6.5)
+def _screen_my_bookings(adapter, user, lang) -> None:
+    rows = db.upcoming_for_user(user.platform, user.user_id,
+                                config.today_local().isoformat())
+    if not rows:
+        adapter.send_buttons(user, texts.t(lang, "my_bookings_empty"), [],
+                             nav=[(texts.t(lang, "btn_book"), "B"),
+                                  (texts.t(lang, "btn_main_menu"), "H")])
+        return None
+
+    lines = [texts.t(lang, "my_bookings_title"), ""]
+    buttons = []
+    # حد العشرة يشمل زري الإلغاء والتعديل لكل حجز، فنعرض أحدث أربعة.
+    for res in rows[:4]:
+        lines.append(texts.t(
+            lang, "res_line", code=res["code"],
+            date=admin._fmt_date(res, lang), time=admin._fmt_time(res),
+            table=admin._table_number(res),
+            status=admin._status_label(res, lang)))
+        buttons.append((texts.t(lang, "btn_cancel_res", code=res["code"]),
+                        "R:x:%d" % res["id"]))
+        buttons.append((texts.t(lang, "btn_edit_res", code=res["code"]),
+                        "R:e:%d" % res["id"]))
+    adapter.send_buttons(user, NEWLINE.join(lines), buttons,
+                         nav=[(texts.t(lang, "btn_main_menu"), "H")])
+    return None
+
+
+def _cancel_reservation(adapter, user, lang, res_id, then_rebook=False) -> None:
+    """SPEC 6.5 — الإلغاء والتعديل بلا موافقة أدمن، مع إشعار الأدمن."""
+    res = db.get_reservation(res_id)
+    if (not res or res["user_id"] != str(user.user_id)
+            or res["status"] not in ("pending", "confirmed", "seated")):
+        return _screen_my_bookings(adapter, user, lang)
+
+    db.update_reservation(res_id, status="cancelled")
+    fresh = db.get_reservation(res_id) or res
+    admin.notify_customer_cancelled(fresh)
+
+    if then_rebook:
+        adapter.send_text(user, texts.t(lang, "edit_intro"))
+        return _ask_type(adapter, user, lang)
+    adapter.send_buttons(user, texts.t(lang, "res_cancelled",
+                                       code=res["code"]), [],
+                         nav=[(texts.t(lang, "btn_book"), "B"),
+                              (texts.t(lang, "btn_main_menu"), "H")])
+    return None
+
+
+def _handle_reservations(adapter, user, lang, parts) -> None:
+    if len(parts) == 1:
+        return _screen_my_bookings(adapter, user, lang)
+    try:
+        res_id = int(parts[2])
+    except (IndexError, ValueError):
+        return _screen_my_bookings(adapter, user, lang)
+    if parts[1] == "x":
+        return _cancel_reservation(adapter, user, lang, res_id)
+    if parts[1] == "e":
+        return _cancel_reservation(adapter, user, lang, res_id, then_rebook=True)
+    return _screen_my_bookings(adapter, user, lang)
+
+
+def _handle_admin_callback(adapter, user, lang, parts) -> None:
+    """أزرار الأدمن: البت في حجز، تسجيل الحضور، تحرير الطاولة."""
+    if not db.is_admin(user.platform, user.user_id):
+        adapter.send_text(user, texts.t(lang, "admin_only"))
+        return None
+    try:
+        action, res_id = parts[1], int(parts[2])
+    except (IndexError, ValueError):
+        return None
+
+    who = (db.get_user_state(user.platform, user.user_id) or {}).get(
+        "data", {}).get("name") or user.user_id
+
+    if action in ("y", "n"):
+        admin.decide(res_id, action == "y", who)
+        return None
+    if action in ("c", "s"):
+        status = admin.mark_attendance(res_id, action == "c", who)
+        res = db.get_reservation(res_id)
+        if status == "seated":
+            admin.notify_seated_options(res)
+        elif status == "no_show":
+            adapter.send_text(user, texts.t(
+                lang, "admin_marked_noshow", table=admin._table_number(res)))
+        return None
+    if action == "f":
+        if admin.free_table(res_id):
+            res = db.get_reservation(res_id)
+            adapter.send_text(user, texts.t(
+                lang, "admin_table_freed", table=admin._table_number(res)))
+        return None
+    return None
+
+
 # --------------------------------------------------------------- التوجيه
+def start_booking(user: User, lang: str) -> None:
+    """يبدأ تدفق الحجز من خارج الوحدة — يستعمله أمر الأدمن /book."""
+    _ask_type(get_adapter(user.platform), user, lang)
+
+
 def _handle_booking(adapter, user, lang, parts) -> None:
     data = _data(user)
 
@@ -447,6 +552,12 @@ def handle_callback(user: User, data: str, lang: str) -> None:
     if head == "B":
         return _handle_booking(adapter, user, lang, parts)
 
+    if head == "R":
+        return _handle_reservations(adapter, user, lang, parts)
+
+    if head == "A":
+        return _handle_admin_callback(adapter, user, lang, parts)
+
     if head == "M":
         if len(parts) == 1:
             return _screen_menu_root(adapter, user, lang)
@@ -522,6 +633,10 @@ def handle_text(user: User, text: str, lang) -> None:
     stripped = (text or "").strip()
     if stripped in ("/start", "/menu", "start"):
         _screen_main(adapter, user, lang, greeting=stripped != "/menu")
+        return None
+
+    # أوامر الأدمن تُفحص قبل أي شيء آخر (SPEC 10.2).
+    if stripped.startswith("/") and admin.handle_command(user, stripped, lang):
         return None
 
     # إدخال ضمن تدفق الحجز له الأولوية على الأسئلة الحرة.

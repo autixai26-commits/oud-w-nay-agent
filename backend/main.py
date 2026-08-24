@@ -12,10 +12,12 @@ from fastapi import BackgroundTasks, FastAPI, Header, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+import admin
 import booking
 import config
 import conversation
 import db
+import scheduler
 import telegram_api
 import texts
 from platform_adapter import User
@@ -45,6 +47,17 @@ app.add_middleware(
 )
 
 WEBHOOK_PATH = "/webhook/telegram"
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    """تبدأ الجدولة مع الخدمة. المسح يلتقط ما فات أثناء أي إعادة تشغيل."""
+    scheduler.start()
+
+
+@app.on_event("shutdown")
+def _shutdown() -> None:
+    scheduler.stop()
 
 
 def webhook_secret() -> str:
@@ -196,4 +209,7 @@ def api_reserve(token: str, body: ReserveBody,
     lang = created.get("language") or "ar"
     tasks.add_task(_notify_pending, created["platform"],
                    created["user_id"], lang)
+    # SPEC 6.3.2 — إشعار كل الأدمنية. في الخلفية للسبب نفسه: نداءات
+    # تليجرام متعددة لا يجوز أن يقف عندها متصفح الزبون.
+    tasks.add_task(admin.notify_new_reservation, created)
     return {"ok": True, "code": created["code"], "language": lang}

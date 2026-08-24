@@ -91,3 +91,67 @@ def save_user_state(platform: str, user_id: str, *, language: str | None = None,
 def get_language(platform: str, user_id: str) -> str | None:
     st = get_user_state(platform, user_id)
     return (st or {}).get("language")
+
+
+# ------------------------------------------------------------ الأدمنية
+# SPEC 10.1: يتسجّل الأدمن بنفسه بأمر /admin لأن البوت لا يستطيع
+# مراسلة أحد برقم الهاتف. كل الإشعارات تصل لكل الأدمنية.
+def all_admins() -> list[dict]:
+    return (client().table("admins").select("*")
+            .eq("is_active", True).execute().data)
+
+
+def is_admin(platform: str, user_id: str) -> bool:
+    rows = (client().table("admins").select("id")
+            .eq("platform", platform).eq("user_id", str(user_id))
+            .eq("is_active", True).limit(1).execute().data)
+    return bool(rows)
+
+
+def add_admin(platform: str, user_id: str, display_name: str = "") -> None:
+    client().table("admins").upsert(
+        {"platform": platform, "user_id": str(user_id),
+         "display_name": display_name, "is_active": True},
+        on_conflict="platform,user_id").execute()
+
+
+# ------------------------------------------------------------ الحجوزات
+def get_reservation(res_id: int) -> dict | None:
+    rows = (client().table("reservations").select("*")
+            .eq("id", res_id).limit(1).execute().data)
+    return rows[0] if rows else None
+
+
+def reservation_by_code(code: str) -> dict | None:
+    rows = (client().table("reservations").select("*")
+            .eq("code", code.upper().strip()).limit(1).execute().data)
+    return rows[0] if rows else None
+
+
+def update_reservation(res_id: int, **fields) -> dict | None:
+    rows = (client().table("reservations").update(fields)
+            .eq("id", res_id).execute().data)
+    return rows[0] if rows else None
+
+
+def reservations_on(day: str) -> list[dict]:
+    """كل حجوزات تاريخ محلي معيّن مرتبة بالموعد — /today و/date واللوحة."""
+    return (client().table("reservations").select("*")
+            .eq("reservation_date", day)
+            .order("reservation_at").execute().data)
+
+
+def upcoming_for_user(platform: str, user_id: str, from_day: str) -> list[dict]:
+    """حجوزات الزبون القادمة القابلة للإلغاء — SPEC 6.5."""
+    return (client().table("reservations").select("*")
+            .eq("platform", platform).eq("user_id", str(user_id))
+            .gte("reservation_date", from_day)
+            .in_("status", ["pending", "confirmed", "seated"])
+            .order("reservation_at").execute().data)
+
+
+def reservations_by_status(statuses: list[str]) -> list[dict]:
+    """يُستعمل في المسح الدوري للجدولة."""
+    return (client().table("reservations").select("*")
+            .in_("status", statuses)
+            .order("reservation_at").execute().data)

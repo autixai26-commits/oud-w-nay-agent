@@ -47,12 +47,19 @@ CREATE TABLE IF NOT EXISTS reservations (
     language          text NOT NULL DEFAULT 'ar' CHECK (language IN ('ar', 'en')),
     decided_by        text,                          -- اسم الأدمن الذي ردّ (SPEC 6.3.6)
     decided_at        timestamptz,
+    -- طوابع الجدولة: NULL يعني لم يُرسل بعد. تمنع تكرار الإرسال عند
+    -- كل دورة مسح (SPEC 6.3.5 و 6.4).
+    admin_alert2_at     timestamptz,
+    reminder_sent_at    timestamptz,
+    attendance_asked_at timestamptz,
+    admin_messages    jsonb NOT NULL DEFAULT '[]'::jsonb,
     created_at        timestamptz NOT NULL DEFAULT now(),
     updated_at        timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_res_date_status ON reservations (reservation_date, status);
 CREATE INDEX IF NOT EXISTS idx_res_table_date  ON reservations (table_id, reservation_date);
 CREATE INDEX IF NOT EXISTS idx_res_user        ON reservations (platform, user_id);
+CREATE INDEX IF NOT EXISTS idx_res_pending_scan ON reservations (status, reservation_at);
 
 -- طاولة واحدة لا تُحجز مرتين في نفس اليوم بحالة شاغلة (SPEC 5.6 و 6.2).
 -- فهرس فريد جزئي: يمنع التعارض على مستوى قاعدة البيانات لا الكود وحده.
