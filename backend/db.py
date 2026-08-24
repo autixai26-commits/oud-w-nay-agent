@@ -63,3 +63,31 @@ def booked_table_ids(reservation_date: str) -> set[int]:
             .in_("status", list(config.OCCUPYING_STATUSES))
             .execute().data)
     return {r["table_id"] for r in rows if r["table_id"] is not None}
+
+
+# ------------------------------------------------------- حالة المستخدم
+# SPEC 11: المفتاح (platform, user_id) وليس telegram_id وحده،
+# حتى تعمل نفس الجداول مع واتساب بلا هجرة.
+def get_user_state(platform: str, user_id: str) -> dict | None:
+    rows = (client().table("user_state").select("*")
+            .eq("platform", platform).eq("user_id", str(user_id))
+            .limit(1).execute().data)
+    return rows[0] if rows else None
+
+
+def save_user_state(platform: str, user_id: str, *, language: str | None = None,
+                    state: str | None = None, data: dict | None = None) -> None:
+    row = {"platform": platform, "user_id": str(user_id)}
+    if language is not None:
+        row["language"] = language
+    if state is not None:
+        row["state"] = state
+    if data is not None:
+        row["data"] = data
+    client().table("user_state").upsert(
+        row, on_conflict="platform,user_id").execute()
+
+
+def get_language(platform: str, user_id: str) -> str | None:
+    st = get_user_state(platform, user_id)
+    return (st or {}).get("language")
