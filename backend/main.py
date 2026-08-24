@@ -233,3 +233,147 @@ def api_reserve(token: str, body: ReserveBody,
     # تليجرام متعددة لا يجوز أن يقف عندها متصفح الزبون.
     tasks.add_task(admin.notify_new_reservation, created)
     return {"ok": True, "code": created["code"], "language": lang}
+
+
+# ------------------------------------------------- لوحة الأدمن (SPEC 10.3)
+# الصفحة تُرسل كلمة السر مرة واحدة وتستلم توكن جلسة موقّعاً.
+# كلمة السر نفسها لا توجد أبداً في كود الواجهة ولا في أي رد.
+
+DASHBOARD_TTL_HOURS = 12
+
+
+class LoginBody(BaseModel):
+    password: str
+
+
+class PositionsBody(BaseModel):
+    token: str
+    positions: list
+
+
+def _sign(payload: str) -> str:
+    return hmac.new(config.ADMIN_DASHBOARD_PASSWORD.encode("utf-8"),
+                    payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def issue_dashboard_token() -> str:
+    """توكن موقّع بلا حالة في الخادم: صلاحيته داخله وتوقيعه يحميه."""
+    expires = int((config.now_utc().timestamp())) + DASHBOARD_TTL_HOURS * 3600
+    payload = str(expires)
+    return "%s.%s" % (payload, _sign(payload))
+
+
+def valid_dashboard_token(token: str) -> bool:
+    if not token or "." not in token or not config.ADMIN_DASHBOARD_PASSWORD:
+        return False
+    payload, _, signature = token.partition(".")
+    if not hmac.compare_digest(signature, _sign(payload)):
+        return False
+    try:
+        return int(payload) > config.now_utc().timestamp()
+    except ValueError:
+        return False
+
+
+def _guard(token: str) -> bool:
+    if valid_dashboard_token(token):
+        return True
+    log.warning("رُفض طلب لوحة: توكن غير صالح")
+    return False
+
+
+@app.post("/api/admin/login")
+def api_admin_login(body: LoginBody) -> dict:
+    """يتحقق من كلمة السر ويعيد توكن جلسة. لا يعيد كلمة السر أبداً."""
+    if not config.ADMIN_DASHBOARD_PASSWORD:
+        return {"ok": False}
+    if not hmac.compare_digest(body.password or "",
+                               config.ADMIN_DASHBOARD_PASSWORD):
+        log.warning("محاولة دخول للوحة بكلمة سر غير صحيحة")
+        return {"ok": False}
+    return {"ok": True, "token": issue_dashboard_token(),
+            "hours": DASHBOARD_TTL_HOURS}
+
+
+@app.get("/api/admin/reservations")
+def api_admin_reservations(token: str, date: str = "",
+                           status: str = "") -> dict:
+    """حجوزات تاريخ معيّن مع حالتها — عرض فقط، بلا أي تعديل (SPEC 10.3)."""
+    if not _guard(token):
+        return {"ok": False, "reason": "unauthorized"}
+
+    day = date or config.today_local().isoformat()
+    try:
+        booking.Date.fromisoformat(day)
+    except ValueError:
+        return {"ok": False, "reason": "bad_date"}
+
+    tables = {t["id"]: t for t in db.all_tables()}
+    rows = []
+    for r in db.reservations_on(day):
+        if status and r["status"] != status:
+            continue
+        tb = tables.get(r["table_id"])
+        rows.append({
+            "code": r["code"],
+            "date": r["reservation_date"],
+            "time": admin._fmt_time(r),
+            "table": tb["table_number"] if tb else None,
+            "hall": tb["hall"] if tb else None,
+            "people": r["party_size"],
+            "kind": r["booking_type"],
+            "name": r["customer_name"],
+            "phone": r["customer_phone"],
+            "status": r["status"],
+            "large_group": bool(r.get("is_large_group")),
+        })
+
+    occupying = [r for r in db.reservations_on(day)
+                 if r["status"] in config.OCCUPYING_STATUSES]
+    busy = len({r["table_id"] for r in occupying if r["table_id"]})
+    total = len(tables)
+    return {
+        "ok": True, "date": day, "rows": rows,
+        "stats": {"count": len(occupying), "busy": busy, "total": total,
+                  "rate": round(100 * busy / total) if total else 0,
+                  "seats": sum(r["party_size"] for r in occupying)},
+    }
+
+
+@app.get("/api/admin/tables")
+def api_admin_tables(token: str) -> dict:
+    """كل الطاولات بإحداثياتها — تستهلكها صفحة المعايرة."""
+    if not _guard(token):
+        return {"ok": False, "reason": "unauthorized"}
+    halls: dict = {}
+    for t in db.all_tables():
+        halls.setdefault(t["hall"], []).append({
+            "id": t["id"], "number": t["table_number"],
+            "capacity": t["capacity"],
+            "x": float(t["pos_x"]), "y": float(t["pos_y"])})
+    return {"ok": True, "halls": halls}
+
+
+@app.post("/api/admin/tables/positions")
+def api_admin_positions(body: PositionsBody) -> dict:
+    """يحفظ إحداثيات النقاط بعد المعايرة — SPEC القسم 4.
+
+    الإحداثيات نسب مئوية من أبعاد الصورة، فتصمد مع أي عرض شاشة.
+    """
+    if not _guard(body.token):
+        return {"ok": False, "reason": "unauthorized"}
+    saved = 0
+    for item in body.positions or []:
+        try:
+            table_id = int(item["id"])
+            x = round(float(item["x"]), 2)
+            y = round(float(item["y"]), 2)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (0 <= x <= 100 and 0 <= y <= 100):
+            continue
+        db.client().table("tables").update(
+            {"pos_x": x, "pos_y": y}).eq("id", table_id).execute()
+        saved += 1
+    log.info("حُفظت إحداثيات %d طاولة", saved)
+    return {"ok": True, "saved": saved}

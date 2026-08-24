@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>عود وناي — معايرة النقاط</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+
+<div class="gate" id="gate">
+  <form class="gate-box" id="gate-form">
+    <h1>عود وناي</h1>
+    <p class="muted">معايرة مواقع الطاولات</p>
+    <input type="password" id="pw" placeholder="كلمة السر" autocomplete="current-password" required>
+    <button class="primary" type="submit" id="gate-btn">دخول</button>
+    <p class="err hidden" id="gate-err">كلمة السر غير صحيحة</p>
+  </form>
+</div>
+
+<div class="hidden" id="panel">
+  <header class="bar">
+    <div class="row-between">
+      <div>
+        <div class="brand">معايرة النقاط</div>
+        <div class="summary">اسحب كل نقطة فوق طاولتها ثم احفظ</div>
+      </div>
+      <a class="ghost small" href="admin.html" style="text-decoration:none">اللوحة</a>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs"></nav>
+
+  <div class="cal-bar">
+    <button class="primary small" id="save">حفظ الإحداثيات</button>
+    <button class="ghost small" id="reset">تراجع عن التغييرات</button>
+    <span class="muted" id="status"></span>
+  </div>
+
+  <div class="cal-stage" id="stage">
+    <picture>
+      <source id="hall-webp" srcset="" type="image/webp">
+      <img id="hall-img" src="" alt="" draggable="false">
+    </picture>
+    <div id="dots"></div>
+  </div>
+
+  <pre class="cal-readout" id="readout"></pre>
+</div>
+
+<script src="config.js"></script>
+<script src="calibrate.js"></script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>عود وناي — لوحة الحجوزات</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+
+<!-- شاشة الدخول. كلمة السر تُرسل للباك إند ولا تُخزَّن في الصفحة إطلاقاً. -->
+<div class="gate" id="gate">
+  <form class="gate-box" id="gate-form">
+    <h1>عود وناي</h1>
+    <p class="muted">لوحة عرض الحجوزات</p>
+    <input type="password" id="pw" placeholder="كلمة السر" autocomplete="current-password" required>
+    <button class="primary" type="submit" id="gate-btn">دخول</button>
+    <p class="err hidden" id="gate-err">كلمة السر غير صحيحة</p>
+  </form>
+</div>
+
+<div class="hidden" id="panel">
+  <header class="bar">
+    <div class="row-between">
+      <div>
+        <div class="brand">عود وناي</div>
+        <div class="summary" id="head-date"></div>
+      </div>
+      <button class="ghost small" id="logout">خروج</button>
+    </div>
+  </header>
+
+  <section class="stats" id="stats"></section>
+
+  <nav class="filters">
+    <div class="chips" id="day-chips">
+      <button class="chip on" data-day="today">اليوم</button>
+      <button class="chip" data-day="tomorrow">غداً</button>
+      <label class="chip date-chip">
+        <input type="date" id="date-pick">
+      </label>
+    </div>
+    <select id="status-filter" class="chip">
+      <option value="">كل الحالات</option>
+      <option value="pending">بانتظار التثبيت</option>
+      <option value="confirmed">مثبّت</option>
+      <option value="seated">على الطاولة</option>
+      <option value="completed">منتهي</option>
+      <option value="no_show">ما حضر</option>
+      <option value="cancelled">ملغى</option>
+      <option value="rejected">مرفوض</option>
+    </select>
+  </nav>
+
+  <div class="table-wrap">
+    <table id="grid">
+      <thead>
+        <tr>
+          <th>الرمز</th><th>الوقت</th><th>الطاولة</th><th>الصالة</th>
+          <th>العدد</th><th>النوع</th><th>الاسم</th><th>الهاتف</th><th>الحالة</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p class="empty hidden" id="empty">ما في حجوزات بهذا الفلتر.</p>
+  </div>
+
+  <p class="hint" id="refreshed"></p>
+</div>
+
+<script src="config.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>
