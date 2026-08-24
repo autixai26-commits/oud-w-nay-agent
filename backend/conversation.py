@@ -1,20 +1,27 @@
 # -*- coding: utf-8 -*-
-"""آلة حالات المحادثة والأزرار — المرحلة 2.
+"""آلة حالات المحادثة والأزرار — المرحلتان 2 و3.
 
 لا يوجد أي نص موجّه للزبون هنا (SPEC 8) ولا أي نداء مباشر لتليجرام
-(SPEC 11) — النصوص في texts.py والإرسال عبر platform_adapter.
+(SPEC 11) — النصوص في texts.py والإرسال عبر platform_adapter،
+وقواعد الحجز في booking.py.
 
 ترميز callback_data مختصر عمداً لأن تليجرام يحدّه بـ64 بايت:
-    L:<lang>       تعيين اللغة      H              القائمة الرئيسية
-    M              جذر المنيو        M:g:<group>    أقسام مجموعة
-    M:c:<cat>      صفحات فئة         M:s:<sub>:<p>  أصناف صفحة فرعية
-    I              معلومات المطعم    I:<key>        معلومة مفردة
-    B              حجز               X              تبديل اللغة
+    L:<lang>    اللغة        H              القائمة الرئيسية
+    M           جذر المنيو    M:g|c|s:...    مستويات المنيو
+    I           معلومات       I:<key>        معلومة مفردة
+    X           تبديل اللغة   B              بدء الحجز
+    B:t:<type>  نوع الحجز     B:d:<iso>      التاريخ
+    B:p:<per>   الفترة        B:h:<hour>     الساعة
+    B:n:<size>  عدد الأشخاص   B:g:<kind>     نوع المجموعة الكبيرة
+    B:x         إلغاء العملية
 """
 import functools
 import logging
+from datetime import date as Date
 
 import ai
+import booking
+import config
 import db
 import texts
 from platform_adapter import MAX_OPTIONS_PER_LEVEL, User, get as get_adapter
@@ -25,6 +32,12 @@ PAGE_SIZE = MAX_OPTIONS_PER_LEVEL          # 10 أصناف في الصفحة (SP
 GROUPS = ("food", "drinks", "shisha")
 INFO_KEYS = ("location", "hours", "phone", "happy_hour", "shisha_info")
 NEWLINE = "\n"
+
+# حالات انتظار إدخال نصي من الزبون.
+ST_NAME = "bk_name"
+ST_PHONE = "bk_phone"
+ST_LG_SIZE = "bk_lg_size"
+ST_LG_OCCASION = "bk_lg_occasion"
 
 
 # ----------------------------------------------------------- شجرة المنيو
@@ -58,6 +71,58 @@ def _label(node: dict, lang: str) -> str:
     return node["ar"] if lang == "ar" else node["en"]
 
 
+# ------------------------------------------------------------- مساعدات
+def _state(user: User) -> dict:
+    return db.get_user_state(user.platform, user.user_id) or {}
+
+
+def _data(user: User) -> dict:
+    return dict(_state(user).get("data") or {})
+
+
+def _save(user: User, *, state=None, data=None) -> None:
+    db.save_user_state(user.platform, user.user_id, state=state, data=data)
+
+
+def _weekday_name(day: Date, lang: str) -> str:
+    return texts.t(lang, "weekdays").split(",")[day.weekday()]
+
+
+def _date_label(day: Date, lang: str) -> str:
+    today = config.today_local()
+    if day == today:
+        return texts.t(lang, "btn_today")
+    if (day - today).days == 1:
+        return texts.t(lang, "btn_tomorrow")
+    return "%s %d/%d" % (_weekday_name(day, lang), day.day, day.month)
+
+
+def _hour_label(hour: int) -> str:
+    """يعرض الساعة بنظام 12 كما في SPEC 6.1.4 (1:00 … 11:00)."""
+    return "%d:00" % (hour - 12 if hour > 12 else hour)
+
+
+def _summary(data: dict, lang: str) -> str:
+    day = Date.fromisoformat(data["date"])
+    kind = texts.t(lang, "kind_family" if data["type"] == "family"
+                   else "kind_singles")
+    return texts.t(lang, "summary_line",
+                   date="%s %d/%d" % (_weekday_name(day, lang), day.day, day.month),
+                   time=_hour_label(data["hour"]),
+                   people=data["party"], kind=kind)
+
+
+def _digits_only(text: str) -> str:
+    """يحوّل الأرقام العربية إلى لاتينية ويحذف ما عداها."""
+    out = []
+    for ch in text or "":
+        if "٠" <= ch <= "٩":
+            out.append(chr(ord(ch) - 0x0660 + ord("0")))
+        elif ch.isdigit():
+            out.append(ch)
+    return "".join(out)
+
+
 # --------------------------------------------------------------- الشاشات
 def _screen_language(adapter, user) -> None:
     adapter.send_buttons(user, texts.t("ar", "choose_language"),
@@ -66,6 +131,7 @@ def _screen_language(adapter, user) -> None:
 
 
 def _screen_main(adapter, user, lang, greeting=False) -> None:
+    _save(user, state="main", data={})
     text = texts.t(lang, "welcome" if greeting else "main_menu")
     adapter.send_buttons(user, text, [
         (texts.t(lang, "btn_menu"), "M"),
@@ -85,7 +151,6 @@ def _screen_menu_root(adapter, user, lang) -> None:
 
 def _screen_group(adapter, user, lang, group) -> None:
     cats = _cats_of(group)
-    # مجموعة بفئة واحدة (الأرجيلة) لا تحتاج مستوى زائد.
     if len(cats) == 1:
         return _screen_category(adapter, user, lang, cats[0]["slug"])
     adapter.send_buttons(
@@ -100,7 +165,6 @@ def _screen_category(adapter, user, lang, cat_slug) -> None:
     if not cat:
         return _screen_menu_root(adapter, user, lang)
     subs = list(cat["subs"].values())
-    # فئة بصفحة فرعية واحدة تدخل للأصناف مباشرة.
     if len(subs) == 1:
         return _screen_items(adapter, user, lang, subs[0]["slug"], 0)
     adapter.send_buttons(
@@ -111,7 +175,7 @@ def _screen_category(adapter, user, lang, cat_slug) -> None:
 
 
 def build_items_screen(lang: str, sub_slug: str, page: int):
-    """يبني نص صفحة الأصناف وأزرار التنقّل. منفصل عن الإرسال ليكون قابلاً للاختبار."""
+    """نص صفحة الأصناف وأزرار التنقّل — منفصل عن الإرسال ليكون قابلاً للاختبار."""
     sub = _sub(sub_slug)
     if not sub:
         return None
@@ -166,7 +230,192 @@ def _screen_info(adapter, user, lang) -> None:
     ], nav=[(texts.t(lang, "btn_main_menu"), "H")])
 
 
+# ------------------------------------------------------- شاشات الحجز
+def _cancel_nav(lang):
+    return [(texts.t(lang, "btn_cancel_booking"), "B:x")]
+
+
+def _ask_type(adapter, user, lang) -> None:
+    _save(user, state="bk_type", data={})
+    adapter.send_buttons(user, texts.t(lang, "ask_booking_type"), [
+        (texts.t(lang, "btn_family"), "B:t:family"),
+        (texts.t(lang, "btn_singles"), "B:t:singles"),
+    ], nav=_cancel_nav(lang))
+
+
+def _ask_date(adapter, user, lang, data) -> None:
+    _save(user, state="bk_date", data=data)
+    # SPEC 6.1.2 — اليوم وبكرا وخمسة بعدها = 7 أزرار، ضمن حد العشرة.
+    days = booking.next_days()
+    adapter.send_buttons(
+        user, texts.t(lang, "ask_date"),
+        [(_date_label(d, lang), "B:d:%s" % d.isoformat()) for d in days],
+        nav=_cancel_nav(lang))
+
+
+def _ask_period(adapter, user, lang, data) -> None:
+    _save(user, state="bk_period", data=data)
+    adapter.send_buttons(user, texts.t(lang, "ask_period"), [
+        (texts.t(lang, "btn_noon"), "B:p:noon"),
+        (texts.t(lang, "btn_evening"), "B:p:evening"),
+        (texts.t(lang, "btn_late"), "B:p:late"),
+    ], nav=_cancel_nav(lang))
+
+
+def _ask_hour(adapter, user, lang, data, period) -> None:
+    _save(user, state="bk_hour", data=data)
+    hours = booking.PERIODS.get(period, ())
+    adapter.send_buttons(
+        user, texts.t(lang, "ask_hour"),
+        [(_hour_label(h), "B:h:%d" % h) for h in hours],
+        nav=[(texts.t(lang, "btn_back"), "B:p"),
+             (texts.t(lang, "btn_cancel_booking"), "B:x")])
+
+
+def _ask_party(adapter, user, lang, data) -> None:
+    _save(user, state="bk_party", data=data)
+    buttons = [("%d–%d" % (lo, hi), "B:n:%d" % hi)
+               for lo, hi in booking.PARTY_CHOICES]
+    buttons.append((texts.t(lang, "btn_party_11"), "B:n:11"))
+    adapter.send_buttons(user, texts.t(lang, "ask_party"), buttons,
+                         nav=_cancel_nav(lang))
+
+
+def _ask_name(adapter, user, lang, data) -> None:
+    _save(user, state=ST_NAME, data=data)
+    adapter.send_buttons(user, texts.t(lang, "ask_name"), [],
+                         nav=_cancel_nav(lang))
+
+
+def _ask_phone(adapter, user, lang, data) -> None:
+    _save(user, state=ST_PHONE, data=data)
+    adapter.send_buttons(user, texts.t(lang, "ask_phone"), [],
+                         nav=_cancel_nav(lang))
+
+
+def _finish_booking(adapter, user, lang, data) -> None:
+    """ينشئ الجلسة ويرسل الرابط — SPEC 6.1.7 و 6.1.8."""
+    day = Date.fromisoformat(data["date"])
+    when_local = booking.local_datetime(day, data["hour"])
+
+    # SPEC 6.1.7 — تنويه الهابي أور قبل الرابط.
+    if booking.is_happy_hour(when_local):
+        adapter.send_text(user, texts.t(lang, "happy_hour_notice"))
+
+    session = booking.create_session(
+        platform=user.platform, user_id=user.user_id,
+        booking_type=data["type"], party_size=data["party"],
+        day=day, hour=data["hour"], name=data["name"],
+        phone=data["phone"], language=lang)
+
+    _save(user, state="bk_await_table", data=data)
+    adapter.send_link(
+        user,
+        texts.t(lang, "link_ready", summary=_summary(data, lang)),
+        texts.t(lang, "btn_choose_table"),
+        booking.public_link(session["token"]))
+
+
+def _finish_large_group(adapter, user, lang, data) -> None:
+    """المسار اليدوي — SPEC 5.8. لا رابط ولا اختيار طاولة."""
+    day = Date.fromisoformat(data["date"])
+    res = booking.large_group_request(
+        platform=user.platform, user_id=user.user_id,
+        party_size=data["party"], booking_type=data.get("type", "family"),
+        day=day, hour=data["hour"], name=data["name"], phone=data["phone"],
+        language=lang, group_type=data.get("group_type", ""),
+        occasion=data.get("occasion", ""))
+    _save(user, state="main", data={})
+    adapter.send_buttons(
+        user,
+        texts.t(lang, "large_group_sent",
+                summary=_summary(data, lang), code=res["code"]),
+        [], nav=[(texts.t(lang, "btn_main_menu"), "H")])
+
+
+def _ask_group_type(adapter, user, lang, data) -> None:
+    _save(user, state="bk_lg_type", data=data)
+    adapter.send_buttons(user, texts.t(lang, "ask_group_type"), [
+        (texts.t(lang, "btn_group_family"), "B:g:family"),
+        (texts.t(lang, "btn_group_wedding"), "B:g:wedding"),
+        (texts.t(lang, "btn_group_singles"), "B:g:singles"),
+    ], nav=_cancel_nav(lang))
+
+
 # --------------------------------------------------------------- التوجيه
+def _handle_booking(adapter, user, lang, parts) -> None:
+    data = _data(user)
+
+    if len(parts) == 1:                       # B — بدء التدفق
+        return _ask_type(adapter, user, lang)
+
+    kind = parts[1]
+
+    if kind == "x":                           # إلغاء
+        _save(user, state="main", data={})
+        adapter.send_buttons(user, texts.t(lang, "booking_cancelled"), [],
+                             nav=[(texts.t(lang, "btn_main_menu"), "H")])
+        return None
+
+    if kind == "t" and len(parts) > 2:        # نوع الحجز
+        data["type"] = "singles" if parts[2] == "singles" else "family"
+        return _ask_date(adapter, user, lang, data)
+
+    if kind == "d" and len(parts) > 2:        # التاريخ
+        try:
+            day = Date.fromisoformat(parts[2])
+        except ValueError:
+            return _ask_date(adapter, user, lang, data)
+        # SPEC 5.4 — المنع المبكر: يُرفض هنا قبل توليد أي رابط.
+        if booking.reject_reason(data.get("type", "family"), day):
+            adapter.send_buttons(user, texts.t(lang, "singles_family_day"), [],
+                                 nav=[(texts.t(lang, "btn_back"), "B:t:singles"),
+                                      (texts.t(lang, "btn_main_menu"), "H")])
+            return None
+        data["date"] = day.isoformat()
+        return _ask_period(adapter, user, lang, data)
+
+    if kind == "p":                           # الفترة
+        if len(parts) > 2 and parts[2] in booking.PERIODS:
+            return _ask_hour(adapter, user, lang, data, parts[2])
+        return _ask_period(adapter, user, lang, data)
+
+    if kind == "h" and len(parts) > 2:        # الساعة
+        try:
+            hour = int(parts[2])
+        except ValueError:
+            return _ask_period(adapter, user, lang, data)
+        if booking.period_of(hour) is None:
+            return _ask_period(adapter, user, lang, data)
+        data["hour"] = hour
+        return _ask_party(adapter, user, lang, data)
+
+    if kind == "n" and len(parts) > 2:        # عدد الأشخاص
+        try:
+            size = int(parts[2])
+        except ValueError:
+            return _ask_party(adapter, user, lang, data)
+        if size >= config.LARGE_GROUP_MIN:
+            # SPEC 5.8 — المسار اليدوي.
+            data["large"] = True
+            adapter.send_text(user, texts.t(lang, "large_group_intro"))
+            _save(user, state=ST_LG_SIZE, data=data)
+            adapter.send_buttons(user, texts.t(lang, "ask_party_exact"), [],
+                                 nav=_cancel_nav(lang))
+            return None
+        data["party"] = size
+        return _ask_name(adapter, user, lang, data)
+
+    if kind == "g" and len(parts) > 2:        # نوع المجموعة الكبيرة
+        data["group_type"] = parts[2]
+        _save(user, state=ST_LG_OCCASION, data=data)
+        adapter.send_buttons(user, texts.t(lang, "ask_occasion"), [],
+                             nav=_cancel_nav(lang))
+        return None
+
+    return _ask_type(adapter, user, lang)
+
+
 def handle_callback(user: User, data: str, lang: str) -> None:
     adapter = get_adapter(user.platform)
     parts = data.split(":")
@@ -174,8 +423,7 @@ def handle_callback(user: User, data: str, lang: str) -> None:
 
     if head == "L":
         chosen = parts[1] if len(parts) > 1 and parts[1] in ("ar", "en") else "ar"
-        db.save_user_state(user.platform, user.user_id,
-                           language=chosen, state="main")
+        db.save_user_state(user.platform, user.user_id, language=chosen)
         adapter.send_text(user, texts.t(chosen, "language_set"))
         return _screen_main(adapter, user, chosen, greeting=True)
 
@@ -197,9 +445,7 @@ def handle_callback(user: User, data: str, lang: str) -> None:
         return _screen_info(adapter, user, lang)
 
     if head == "B":
-        adapter.send_buttons(user, texts.t(lang, "booking_soon"), [],
-                             nav=[(texts.t(lang, "btn_main_menu"), "H")])
-        return None
+        return _handle_booking(adapter, user, lang, parts)
 
     if head == "M":
         if len(parts) == 1:
@@ -220,6 +466,51 @@ def handle_callback(user: User, data: str, lang: str) -> None:
     return _screen_main(adapter, user, lang)
 
 
+def _handle_input(adapter, user, lang, state, text) -> bool:
+    """يعالج الإدخال النصي أثناء تدفق الحجز. يعيد True إن استهلك الرسالة."""
+    data = _data(user)
+    value = (text or "").strip()
+
+    if state == ST_NAME:
+        if not value:
+            _ask_name(adapter, user, lang, data)
+            return True
+        data["name"] = value[:80]
+        _ask_phone(adapter, user, lang, data)
+        return True
+
+    if state == ST_PHONE:
+        digits = _digits_only(value)
+        # رقم أردني معقول: 9 أو 10 خانات. أقل من ذلك خطأ إدخال.
+        if not 9 <= len(digits) <= 13:
+            adapter.send_buttons(user, texts.t(lang, "invalid_phone"), [],
+                                 nav=_cancel_nav(lang))
+            return True
+        data["phone"] = digits
+        if data.get("large"):
+            _ask_group_type(adapter, user, lang, data)
+        else:
+            _finish_booking(adapter, user, lang, data)
+        return True
+
+    if state == ST_LG_SIZE:
+        digits = _digits_only(value)
+        if not digits or not digits.isdigit() or int(digits) < 1:
+            adapter.send_buttons(user, texts.t(lang, "invalid_number"), [],
+                                 nav=_cancel_nav(lang))
+            return True
+        data["party"] = int(digits)
+        _ask_name(adapter, user, lang, data)
+        return True
+
+    if state == ST_LG_OCCASION:
+        data["occasion"] = value[:120]
+        _finish_large_group(adapter, user, lang, data)
+        return True
+
+    return False
+
+
 def handle_text(user: User, text: str, lang) -> None:
     adapter = get_adapter(user.platform)
 
@@ -231,6 +522,10 @@ def handle_text(user: User, text: str, lang) -> None:
     stripped = (text or "").strip()
     if stripped in ("/start", "/menu", "start"):
         _screen_main(adapter, user, lang, greeting=stripped != "/menu")
+        return None
+
+    # إدخال ضمن تدفق الحجز له الأولوية على الأسئلة الحرة.
+    if _handle_input(adapter, user, lang, _state(user).get("state"), stripped):
         return None
 
     # سؤال حر: القواعد الثابتة تُفرض داخل ai.reply_to قبل النموذج.

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>عود وناي — اختر طاولتك</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">عود وناي</div>
+  <div class="summary" id="summary"></div>
+</header>
+
+<main id="app">
+  <div class="state" id="loading">
+    <div class="spinner"></div>
+    <p data-ar="جاري التحميل…" data-en="Loading…">جاري التحميل…</p>
+  </div>
+
+  <div class="state hidden" id="invalid">
+    <div class="big">⏳</div>
+    <h2 id="invalid-title"></h2>
+    <p id="invalid-body"></p>
+  </div>
+
+  <div class="hidden" id="picker">
+    <nav class="tabs" id="tabs"></nav>
+
+    <div class="legend">
+      <span><i class="dot d-available"></i><span data-ar="متاحة" data-en="Available">متاحة</span></span>
+      <span><i class="dot d-booked"></i><span data-ar="محجوزة" data-en="Booked">محجوزة</span></span>
+      <span><i class="dot d-small"></i><span data-ar="سعة أصغر" data-en="Too small">سعة أصغر</span></span>
+    </div>
+
+    <div class="stage" id="stage">
+      <div class="hall-lock hidden" id="hall-lock">
+        <div class="lock-box">
+          <div class="big">🔒</div>
+          <p id="lock-text"></p>
+        </div>
+      </div>
+      <picture>
+        <source id="hall-webp" srcset="" type="image/webp">
+        <img id="hall-img" src="" alt="">
+      </picture>
+      <div class="dots" id="dots"></div>
+    </div>
+
+    <p class="hint" id="hint"></p>
+  </div>
+
+  <div class="state hidden" id="done">
+    <div class="big">✅</div>
+    <h2 id="done-title"></h2>
+    <p id="done-body"></p>
+    <p class="code" id="done-code"></p>
+  </div>
+</main>
+
+<!-- نافذة التأكيد — SPEC 6.2 -->
+<div class="modal hidden" id="modal">
+  <div class="sheet">
+    <h3 id="m-title"></h3>
+    <dl class="rows" id="m-rows"></dl>
+    <div class="actions">
+      <button class="ghost" id="m-cancel"></button>
+      <button class="primary" id="m-ok"></button>
+    </div>
+    <p class="err hidden" id="m-err"></p>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

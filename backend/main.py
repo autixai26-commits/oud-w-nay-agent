@@ -8,12 +8,16 @@ import hashlib
 import hmac
 import logging
 
-from fastapi import FastAPI, Header, Request, Response
+from fastapi import BackgroundTasks, FastAPI, Header, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
+import booking
 import config
 import conversation
 import db
 import telegram_api
+import texts
 from platform_adapter import User
 
 logging.basicConfig(
@@ -28,6 +32,17 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("oud-w-nay")
 
 app = FastAPI(title="Oud w Nay", docs_url=None, redoc_url=None)
+
+# الموقع يُستضاف على Netlify والباك إند على Render، أي أصلان مختلفان.
+# نسمح بأصل الموقع وحده متى عُرف؛ وقبل النشر (PUBLIC_WEB_URL فارغ) نسمح
+# بكل الأصول لأن الواجهة لا تحمل أي سر وكل طلب محمي بتوكن الجلسة.
+_origins = [config.PUBLIC_WEB_URL] if config.PUBLIC_WEB_URL else ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
 
 WEBHOOK_PATH = "/webhook/telegram"
 
@@ -108,3 +123,77 @@ def _dispatch(update: dict) -> None:
 
     conversation.handle_text(user, msg.get("text", ""),
                              db.get_language(user.platform, user.user_id))
+
+
+# ------------------------------------------------------------ REST API
+# يستهلكها موقع اختيار الطاولة. لا مفاتيح ولا أسرار تعبر هذه النقاط —
+# التوكن وحده يعرّف الجلسة، وهو صالح 30 دقيقة ولاستعمال واحد (SPEC 6.1.8).
+
+class ReserveBody(BaseModel):
+    table_id: int
+
+
+def _booking_payload(session: dict) -> dict:
+    """ملخّص الحجز الذي تعرضه الصفحة — SPEC 6.2."""
+    day = booking.Date.fromisoformat(session["reservation_date"])
+    when_local = config.to_local(
+        booking.datetime.fromisoformat(session["reservation_at"]))
+    lang = session.get("language") or "ar"
+    return {
+        "date": session["reservation_date"],
+        "weekday": texts.t(lang, "weekdays").split(",")[day.weekday()],
+        "time": "%d:00" % (when_local.hour - 12 if when_local.hour > 12
+                           else when_local.hour),
+        "hour24": when_local.hour,
+        "party_size": session["party_size"],
+        "booking_type": session["booking_type"],
+        "name": session["customer_name"],
+        "language": lang,
+    }
+
+
+@app.get("/api/booking/{token}")
+def api_booking(token: str) -> dict:
+    """حالة الرابط وخريطة الصالات الثلاث."""
+    session = booking.get_session(token)
+    state = booking.session_state(session)
+    if state != "ok":
+        return {"state": state}
+    day = booking.Date.fromisoformat(session["reservation_date"])
+    return {
+        "state": "ok",
+        "booking": _booking_payload(session),
+        "halls": booking.hall_map(day, session["party_size"],
+                                  session["booking_type"]),
+    }
+
+
+def _notify_pending(platform: str, user_id: str, lang: str) -> None:
+    """SPEC 6.3.1 — يطمئن الزبون في البوت بعد اختياره الطاولة."""
+    try:
+        conversation.get_adapter(platform).send_text(
+            User(platform, user_id, user_id), texts.t(lang, "booking_pending"))
+    except Exception:  # noqa: BLE001
+        log.warning("تعذّر إبلاغ الزبون في البوت")
+
+
+@app.post("/api/booking/{token}/reserve")
+def api_reserve(token: str, body: ReserveBody,
+                tasks: BackgroundTasks) -> dict:
+    """ينشئ الحجز ويقفل الطاولة فوراً — SPEC 6.2.
+
+    إشعار البوت يُنفَّذ في الخلفية عمداً: نداء Telegram API نداء شبكة
+    خارجي، ولو انتظرناه لبقي متصفح الزبون معلّقاً على شاشة التأكيد
+    بينما الحجز صار مثبّتاً أصلاً في قاعدة البيانات.
+    """
+    try:
+        created = booking.create_reservation(token, body.table_id)
+    except booking.BookingError as exc:
+        return {"ok": False, "reason": str(exc)}
+
+    # اللغة تأتي من صف الحجز نفسه لا من استعلام جديد للجلسة —
+    # كل رحلة إضافية لقاعدة البيانات تُضاف مباشرةً لزمن انتظار الزبون.
+    lang = created.get("language") or "ar"
+    tasks.add_task(_notify_pending, created["platform"],
+                   created["user_id"], lang)
+    return {"ok": True, "code": created["code"], "language": lang}

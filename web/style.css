@@ -1,0 +1,162 @@
+/* عود وناي — صفحة اختيار الطاولة. CSS خام بلا أي framework. */
+
+:root {
+  --bg: #14100d;
+  --panel: #1e1813;
+  --line: #33291f;
+  --text: #f2e9dd;
+  --muted: #a8998a;
+  --gold: #c9a227;
+  --green: #3fae5a;
+  --red: #d94b4b;
+  --grey: #8a8078;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", Tahoma, "Noto Naskh Arabic", system-ui, sans-serif;
+  line-height: 1.6;
+  -webkit-text-size-adjust: 100%;
+}
+
+.hidden { display: none !important; }
+
+/* ------------------------------------------------------------ الشريط */
+.bar {
+  position: sticky; top: 0; z-index: 20;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 16px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.brand { color: var(--gold); font-size: 19px; font-weight: 700; letter-spacing: .3px; }
+.summary { color: var(--muted); font-size: 13.5px; }
+
+/* ------------------------------------------------------------ الحالات */
+.state { text-align: center; padding: 64px 24px; }
+.state h2 { font-size: 20px; margin-bottom: 8px; }
+.state p { color: var(--muted); max-width: 34ch; margin: 0 auto; }
+.big { font-size: 46px; margin-bottom: 12px; }
+.code {
+  margin-top: 18px; color: var(--gold);
+  font-size: 20px; font-weight: 700; letter-spacing: 2px;
+}
+.spinner {
+  width: 30px; height: 30px; margin: 0 auto 14px;
+  border: 3px solid var(--line); border-top-color: var(--gold);
+  border-radius: 50%; animation: spin .9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ------------------------------------------------------------ التبويبات */
+.tabs {
+  display: flex; gap: 8px; padding: 12px 16px 4px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+}
+.tabs button {
+  flex: 0 0 auto;
+  background: var(--panel); color: var(--muted);
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 8px 16px; font-size: 14px; font-family: inherit;
+  cursor: pointer; white-space: nowrap;
+}
+.tabs button.on { background: var(--gold); color: #1a1206; border-color: var(--gold); font-weight: 700; }
+.tabs button .pad { opacity: .75; font-size: 12px; }
+
+/* ------------------------------------------------------------ الدليل */
+.legend {
+  display: flex; gap: 16px; justify-content: center;
+  padding: 10px 16px; color: var(--muted); font-size: 12.5px;
+}
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+/* أيقونات الدليل تشارك الصنف .dot لكنها ليست على الخريطة،
+   فنلغي التموضع المطلق وإلا التصقت بالنص. */
+.legend .dot {
+  position: static; transform: none;
+  width: 11px; height: 11px; border-width: 1px; flex: 0 0 auto;
+}
+
+/* ------------------------------------------------------------ الخريطة */
+.stage {
+  position: relative; margin: 4px 12px 0;
+  border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+  background: #000;
+}
+.stage img { display: block; width: 100%; height: auto; }
+
+.dots { position: absolute; inset: 0; }
+
+.dot {
+  position: absolute; transform: translate(-50%, -50%);
+  width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; color: #fff;
+  border: 2px solid rgba(255, 255, 255, .9);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .55);
+  font-family: inherit;
+}
+/* النقطة داخل الخريطة تُوضع بإحداثيات مئوية، فتصمد مع أي عرض شاشة */
+button.dot { cursor: pointer; padding: 0; }
+button.dot[disabled] { cursor: not-allowed; }
+
+.d-available { background: var(--green); }
+.d-booked { background: var(--red); }
+.d-small { background: var(--grey); opacity: .85; }
+
+button.d-available:active { transform: translate(-50%, -50%) scale(.9); }
+.d-available.sel { outline: 3px solid var(--gold); outline-offset: 2px; }
+
+.tip {
+  position: absolute; transform: translate(-50%, -50%);
+  background: rgba(20, 16, 13, .95); color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 5px 10px; font-size: 12px; white-space: nowrap;
+  pointer-events: none; z-index: 5;
+}
+
+/* قفل الصالة — SPEC 5.5 */
+.hall-lock {
+  position: absolute; inset: 0; z-index: 8;
+  background: rgba(10, 8, 6, .76);
+  display: grid; place-items: center; text-align: center; padding: 20px;
+}
+.lock-box p { color: var(--text); max-width: 26ch; }
+
+.hint {
+  text-align: center; color: var(--muted);
+  font-size: 12.5px; padding: 12px 16px 28px;
+}
+
+/* ------------------------------------------------------------ النافذة */
+.modal {
+  position: fixed; inset: 0; z-index: 40;
+  background: rgba(0, 0, 0, .66);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.sheet {
+  background: var(--panel); width: 100%; max-width: 440px;
+  border: 1px solid var(--line); border-radius: 16px 16px 0 0;
+  padding: 20px 20px calc(20px + env(safe-area-inset-bottom));
+}
+.sheet h3 { font-size: 17px; margin-bottom: 14px; }
+.rows { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; margin-bottom: 18px; }
+.rows dt { color: var(--muted); font-size: 13px; }
+.rows dd { font-size: 14px; font-weight: 600; }
+.actions { display: flex; gap: 10px; }
+.actions button {
+  flex: 1; padding: 13px; border-radius: 10px; font-size: 15px;
+  font-family: inherit; font-weight: 700; cursor: pointer;
+}
+.primary { background: var(--gold); color: #1a1206; border: none; }
+.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+.actions button[disabled] { opacity: .55; cursor: wait; }
+.err { color: var(--red); font-size: 13px; margin-top: 12px; text-align: center; }
+
+@media (min-width: 620px) {
+  .modal { align-items: center; }
+  .sheet { border-radius: 16px; }
+  .stage { margin: 4px auto 0; max-width: 900px; }
+}

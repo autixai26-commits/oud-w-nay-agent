@@ -57,6 +57,10 @@ class BaseAdapter:
                    caption: str = "") -> None:
         raise NotImplementedError
 
+    def send_link(self, user: User, text: str, label: str, url: str) -> None:
+        """زر يفتح رابطاً خارجياً. يقابله في واتساب زر cta_url."""
+        raise NotImplementedError
+
 
 class TelegramAdapter(BaseAdapter):
     platform = "telegram"
@@ -85,6 +89,11 @@ class TelegramAdapter(BaseAdapter):
         telegram_api.edit_message_text(user.chat_id or user.user_id, message_id,
                                        text, self._markup(buttons, nav))
 
+    def send_link(self, user: User, text: str, label: str, url: str) -> None:
+        telegram_api.send_message(
+            user.chat_id or user.user_id, text,
+            {"inline_keyboard": [[{"text": label, "url": url}]]})
+
     def send_voice(self, user: User, audio_bytes: bytes, caption: str = "") -> None:
         # المرحلة 5.
         raise NotImplementedError("الصوت يُنفَّذ في المرحلة 5")
@@ -109,6 +118,9 @@ class WhatsAppAdapter(BaseAdapter):
 
     def send_buttons(self, user: User, text: str, buttons, nav=None) -> None:
         _validate(buttons)
+        raise NotImplementedError("واتساب غير مفعّل بعد")
+
+    def send_link(self, user: User, text: str, label: str, url: str) -> None:
         raise NotImplementedError("واتساب غير مفعّل بعد")
 
     def send_voice(self, user: User, audio_bytes: bytes, caption: str = "") -> None:

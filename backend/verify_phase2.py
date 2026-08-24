@@ -46,6 +46,10 @@ class FakeAdapter(platform_adapter.BaseAdapter):
         sent.append({"text": text, "buttons": list(buttons),
                      "nav": list(nav or [])})
 
+    def send_link(self, user, text, label, url):
+        sent.append({"text": text, "buttons": [], "nav": [],
+                     "link": (label, url)})
+
 
 def walk(lang: str) -> dict:
     """يزور كل callback_data قابل للوصول انطلاقاً من القائمة الرئيسية."""
@@ -144,8 +148,11 @@ def main() -> int:
                 depth = max(0, depth)
                 continue
             for m in re.finditer(r'"([^"\n]*)"', line):
-                if arabic.search(m.group(1)):
-                    offenders.append("%s: %s" % (name, m.group(1)[:40]))
+                lit = m.group(1)
+                # حرف أو حرفان ليسا رسالة للزبون — مثل حدّي نطاق الأرقام
+                # العربية عند تحويل الإدخال.
+                if len(lit) > 2 and arabic.search(lit):
+                    offenders.append("%s: %s" % (name, lit[:40]))
     check(not offenders, "لا نص عربي موجّه للزبون داخل منطق الكود%s"
           % ("" if not offenders else " — %s" % offenders[:3]))
 
