@@ -1,0 +1,184 @@
+[
+  {
+    "table_number": 30,
+    "hall": "outdoor",
+    "capacity": 4,
+    "pos_x": 58.3,
+    "pos_y": 25.0
+  },
+  {
+    "table_number": 31,
+    "hall": "outdoor",
+    "capacity": 4,
+    "pos_x": 45.0,
+    "pos_y": 25.3
+  },
+  {
+    "table_number": 32,
+    "hall": "outdoor",
+    "capacity": 4,
+    "pos_x": 33.6,
+    "pos_y": 27.4
+  },
+  {
+    "table_number": 33,
+    "hall": "outdoor",
+    "capacity": 6,
+    "pos_x": 21.7,
+    "pos_y": 28.9
+  },
+  {
+    "table_number": 34,
+    "hall": "outdoor",
+    "capacity": 6,
+    "pos_x": 25.8,
+    "pos_y": 35.0
+  },
+  {
+    "table_number": 35,
+    "hall": "outdoor",
+    "capacity": 7,
+    "pos_x": 36.9,
+    "pos_y": 40.0
+  },
+  {
+    "table_number": 36,
+    "hall": "outdoor",
+    "capacity": 8,
+    "pos_x": 34.8,
+    "pos_y": 56.1
+  },
+  {
+    "table_number": 37,
+    "hall": "outdoor",
+    "capacity": 4,
+    "pos_x": 78.6,
+    "pos_y": 81.7
+  },
+  {
+    "table_number": 38,
+    "hall": "outdoor",
+    "capacity": 4,
+    "pos_x": 74.2,
+    "pos_y": 55.9
+  },
+  {
+    "table_number": 39,
+    "hall": "outdoor",
+    "capacity": 4,
+    "pos_x": 73.9,
+    "pos_y": 39.8
+  },
+  {
+    "table_number": 40,
+    "hall": "outdoor",
+    "capacity": 4,
+    "pos_x": 74.2,
+    "pos_y": 31.4
+  },
+  {
+    "table_number": 1,
+    "hall": "main",
+    "capacity": 4,
+    "pos_x": 36.7,
+    "pos_y": 84.2
+  },
+  {
+    "table_number": 2,
+    "hall": "main",
+    "capacity": 4,
+    "pos_x": 16.1,
+    "pos_y": 80.5
+  },
+  {
+    "table_number": 3,
+    "hall": "main",
+    "capacity": 10,
+    "pos_x": 37.0,
+    "pos_y": 55.2
+  },
+  {
+    "table_number": 4,
+    "hall": "main",
+    "capacity": 8,
+    "pos_x": 41.1,
+    "pos_y": 34.9
+  },
+  {
+    "table_number": 5,
+    "hall": "main",
+    "capacity": 6,
+    "pos_x": 38.7,
+    "pos_y": 20.3
+  },
+  {
+    "table_number": 6,
+    "hall": "main",
+    "capacity": 4,
+    "pos_x": 41.3,
+    "pos_y": 8.2
+  },
+  {
+    "table_number": 7,
+    "hall": "main",
+    "capacity": 8,
+    "pos_x": 50.6,
+    "pos_y": 15.1
+  },
+  {
+    "table_number": 8,
+    "hall": "main",
+    "capacity": 4,
+    "pos_x": 61.7,
+    "pos_y": 11.6
+  },
+  {
+    "table_number": 9,
+    "hall": "main",
+    "capacity": 4,
+    "pos_x": 64.2,
+    "pos_y": 19.5
+  },
+  {
+    "table_number": 10,
+    "hall": "main",
+    "capacity": 4,
+    "pos_x": 67.2,
+    "pos_y": 31.2
+  },
+  {
+    "table_number": 20,
+    "hall": "narrow",
+    "capacity": 4,
+    "pos_x": 49.2,
+    "pos_y": 13.2
+  },
+  {
+    "table_number": 21,
+    "hall": "narrow",
+    "capacity": 8,
+    "pos_x": 50.6,
+    "pos_y": 23.6
+  },
+  {
+    "table_number": 22,
+    "hall": "narrow",
+    "capacity": 4,
+    "pos_x": 37.6,
+    "pos_y": 44.4
+  },
+  {
+    "table_number": 23,
+    "hall": "narrow",
+    "capacity": 10,
+    "pos_x": 52.4,
+    "pos_y": 71.5
+  },
+  {
+    "table_number": 24,
+    "hall": "narrow",
+    "capacity": 2,
+    "pos_x": 73.1,
+    "pos_y": 41.7
+  }
+]
