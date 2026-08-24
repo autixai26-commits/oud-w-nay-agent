@@ -22,16 +22,28 @@ class ButtonLimitError(ValueError):
     """يُرفع عند تجاوز حد الخيارات — خطأ برمجي لا يُخفى."""
 
 
-@dataclass(frozen=True)
+@dataclass
 class User:
-    """هوية الزبون مستقلة عن المنصة — SPEC 11: المفتاح (platform, user_id)."""
+    """هوية الزبون مستقلة عن المنصة — SPEC 11: المفتاح (platform, user_id).
+
+    voice: الرسالة الواردة كانت صوتية، فالرد يكون صوتاً أيضاً (SPEC 9).
+    voiced: أُرسل الرد الصوتي في هذه النوبة — نمنع تكراره إن أرسل
+            منطق المحادثة أكثر من رسالة واحدة.
+    """
     platform: str
     user_id: str
     chat_id: str | None = None
+    voice: bool = False
+    voiced: bool = False
 
     @property
     def key(self) -> tuple[str, str]:
         return (self.platform, self.user_id)
+
+    def __hash__(self) -> int:
+        # الهوية هي (المنصة، المعرّف) وحدها. حقلا النوبة الصوتية متغيّران
+        # ولا يدخلان في الهوية، وإلا تغيّر التجزيء أثناء الاستعمال.
+        return hash(self.key)
 
 
 def _validate(buttons: list[tuple[str, str]]) -> None:
@@ -74,11 +86,27 @@ class TelegramAdapter(BaseAdapter):
                          for label, data in nav[:MAX_QUICK_BUTTONS]])
         return {"inline_keyboard": rows}
 
+    def _maybe_voice(self, user: User, text: str) -> None:
+        """SPEC 9: صوت داخل ← صوت خارج.
+
+        يُرسل الصوت أولاً ثم النص والأزرار دائماً، لأن الأزرار لا تُنقر
+        من الصوت. وإن فشل التوليد نُكمل نصاً بلا إزعاج الزبون.
+        """
+        if not user.voice or user.voiced:
+            return
+        user.voiced = True
+        import voice
+        audio = voice.render(text)
+        if audio:
+            telegram_api.send_voice(user.chat_id or user.user_id, audio)
+
     def send_text(self, user: User, text: str) -> None:
+        self._maybe_voice(user, text)
         telegram_api.send_message(user.chat_id or user.user_id, text)
 
     def send_buttons(self, user: User, text: str, buttons, nav=None) -> None:
         _validate(buttons)
+        self._maybe_voice(user, text)
         telegram_api.send_message(user.chat_id or user.user_id, text,
                                   self._markup(buttons, nav))
 
@@ -95,8 +123,8 @@ class TelegramAdapter(BaseAdapter):
             {"inline_keyboard": [[{"text": label, "url": url}]]})
 
     def send_voice(self, user: User, audio_bytes: bytes, caption: str = "") -> None:
-        # المرحلة 5.
-        raise NotImplementedError("الصوت يُنفَّذ في المرحلة 5")
+        telegram_api.send_voice(user.chat_id or user.user_id, audio_bytes,
+                                caption)
 
 
 class WhatsAppAdapter(BaseAdapter):

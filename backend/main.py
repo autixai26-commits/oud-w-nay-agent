@@ -20,6 +20,7 @@ import db
 import scheduler
 import telegram_api
 import texts
+import voice
 from platform_adapter import User
 
 logging.basicConfig(
@@ -128,14 +129,33 @@ def _dispatch(update: dict) -> None:
     user = User("telegram", str(frm.get("id")),
                 str(chat.get("id") or frm.get("id")))
 
-    if "voice" in msg or "audio" in msg:
-        # المرحلة 5. حتى ذلك الحين نعامل الرسالة الصوتية كنص فارغ.
-        conversation.handle_text(user, "", db.get_language(
-            user.platform, user.user_id))
+    lang = db.get_language(user.platform, user.user_id)
+
+    # SPEC 9 — صوت داخل ← صوت خارج. النسخ يتم هنا ثم تكمل المعالجة
+    # العادية بلا أي فرع خاص في منطق المحادثة.
+    media = msg.get("voice") or msg.get("audio")
+    if media:
+        spoken = _transcribe_message(media)
+        if not spoken:
+            # فشل النسخ: نعتذر نصاً بدل الصمت، ولا نزعج الزبون بالتفاصيل.
+            conversation.get_adapter(user.platform).send_text(
+                user, texts.t(lang or "ar", "voice_failed"))
+            return
+        user.voice = True
+        conversation.handle_text(user, spoken, lang)
         return
 
-    conversation.handle_text(user, msg.get("text", ""),
-                             db.get_language(user.platform, user.user_id))
+    conversation.handle_text(user, msg.get("text", ""), lang)
+
+
+def _transcribe_message(media: dict) -> str:
+    """ينزّل الرسالة الصوتية من تليجرام وينسخها نصاً."""
+    info = telegram_api.get_file(media.get("file_id", ""))
+    path = (info.get("result") or {}).get("file_path")
+    if not path:
+        return ""
+    audio = telegram_api.download_file(path)
+    return voice.transcribe(audio, filename=path.rsplit("/", 1)[-1])
 
 
 # ------------------------------------------------------------ REST API

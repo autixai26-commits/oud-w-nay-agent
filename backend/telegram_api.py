@@ -73,3 +73,46 @@ def delete_webhook() -> dict:
 
 def get_webhook_info() -> dict:
     return _call("getWebhookInfo")
+
+
+# ------------------------------------------------------------- الصوت
+def get_file(file_id: str) -> dict:
+    """يعيد بيانات الملف بما فيها file_path اللازم للتنزيل."""
+    return _call("getFile", file_id=file_id)
+
+
+def download_file(file_path: str) -> bytes:
+    """ينزّل ملفاً من خوادم تليجرام.
+
+    القيد ٤: الرابط يحوي التوكن، فلا يُطبع ولا يُسجَّل في أي حال.
+    """
+    url = "https://api.telegram.org/file/bot%s/%s" % (
+        config.TELEGRAM_BOT_TOKEN, file_path)
+    try:
+        with httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0)) as c:
+            r = c.get(url)
+        if r.status_code != 200:
+            log.error("تنزيل ملف تليجرام فشل برمز %s", r.status_code)
+            return b""
+        return r.content
+    except Exception as exc:  # noqa: BLE001
+        log.error("تنزيل ملف تليجرام استثناء: %s", type(exc).__name__)
+        return b""
+
+
+def send_voice(chat_id, audio: bytes, caption: str = "") -> dict:
+    """يرسل رسالة صوتية حقيقية. الصيغة ogg/opus وإلا عرضها تليجرام كمرفق."""
+    data = {"chat_id": str(chat_id)}
+    if caption:
+        data["caption"] = caption[:1024]
+    try:
+        with httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0)) as c:
+            r = c.post("%s/sendVoice" % _BASE, data=data,
+                       files={"voice": ("reply.ogg", audio, "audio/ogg")})
+        out = r.json()
+        if not out.get("ok"):
+            log.error("sendVoice فشل: %s", out.get("description"))
+        return out
+    except Exception as exc:  # noqa: BLE001
+        log.error("sendVoice استثناء: %s", type(exc).__name__)
+        return {"ok": False}
