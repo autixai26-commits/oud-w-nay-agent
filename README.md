@@ -82,24 +82,27 @@ TELEGRAM_BOT_TOKEN = "7123456789:AAF-xxxxxxxxxxxxxxxxxxx"
 
 ---
 
-## ٣. OpenAI — الذكاء الاصطناعي وتحويل الصوت لنص
+## ٣. OpenRouter — الذكاء الاصطناعي للأسئلة الحرة
 
-1. روح على **https://platform.openai.com** وسجّل حساب.
-2. **مهم:** لازم تشحن رصيد قبل ما يشتغل المفتاح. من القائمة: **Settings** ← **Billing** ← **Add payment details** ← اشحن **$10** (بتكفي شهور للاستخدام العادي).
-3. من القائمة اليسار: **API keys** — أو روح مباشرة على https://platform.openai.com/api-keys
-4. اضغط **+ Create new secret key**.
+OpenRouter بوابة واحدة بتوصلك لموديلات كتير بمفتاح واحد.
+
+1. روح على **https://openrouter.ai** وسجّل حساب.
+2. **مهم:** لازم تشحن رصيد قبل ما يشتغل المفتاح. من صورتك أعلى اليمين ← **Credits** ← اشحن **$10** (بتكفي شهور للاستخدام العادي).
+3. من القائمة: **Keys** — أو روح مباشرة على https://openrouter.ai/keys
+4. اضغط **Create Key**.
 5. **Name:** `oud-w-nay`
-6. اضغط **Create secret key**.
-7. رح يظهر مفتاح بيبلّش بـ `sk-`. **هاي المرة الوحيدة اللي بتشوفه فيها.** اضغط زر النسخ.
-8. الزقه عند `OPENAI_API_KEY=`
+6. رح يظهر مفتاح بيبلّش بـ `sk-or-v1`. **هاي المرة الوحيدة اللي بتشوفه فيها.** اضغط زر النسخ.
+7. الزقه عند `OPENROUTER_API_KEY=`
 
-المتغيّر `OPENAI_MODEL` خليه زي ما هو (`gpt-4o`).
+المتغيّر `OPENROUTER_MODEL` خليه زي ما هو (`anthropic/claude-sonnet-4-5`). تقدر تبدّل الموديل من هون بدون ما تلمس الكود.
+
+> **ملاحظة:** ما في حساب OpenAI بهذا المشروع إطلاقاً. الأسئلة الحرة عبر OpenRouter، وتحويل الصوت لنص والنص لصوت الاثنين عبر ElevenLabs.
 
 ---
 
-## ٤. ElevenLabs — تحويل النص لصوت
+## ٤. ElevenLabs — تحويل الصوت لنص والنص لصوت
 
-هاد اللي بيخلّي البوت يرد برسالة صوتية بصوت طبيعي.
+هاد اللي بيخلّي البوت يفهم الرسائل الصوتية ويرد برسالة صوتية بصوت طبيعي. **نفس المفتاح بيخدم الاتجاهين.**
 
 **المفتاح:**
 
@@ -156,8 +159,8 @@ TELEGRAM_BOT_TOKEN = "7123456789:AAF-xxxxxxxxxxxxxxxxxxx"
 | المتغيّر | من وين | جاهز؟ |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | BotFather | ☐ |
-| `OPENAI_API_KEY` | platform.openai.com | ☐ |
-| `OPENAI_MODEL` | جاهز مسبقاً (`gpt-4o`) | ☑ |
+| `OPENROUTER_API_KEY` | openrouter.ai/keys | ☐ |
+| `OPENROUTER_MODEL` | جاهز مسبقاً (`anthropic/claude-sonnet-4-5`) | ☑ |
 | `ELEVENLABS_API_KEY` | elevenlabs.io | ☐ |
 | `ELEVENLABS_VOICE_ID` | elevenlabs.io ← Voices | ☐ |
 | `SUPABASE_URL` | Supabase ← Settings ← API | ☐ |
@@ -230,8 +233,8 @@ oud-w-nay-agent/
 │   ├── conversation.py     # آلة حالات المحادثة
 │   ├── booking.py          # منطق الحجز والتوفّر
 │   ├── admin.py            # إشعارات الأدمن وأوامره
-│   ├── ai.py               # OpenAI للأسئلة الحرة
-│   ├── voice.py            # Whisper + ElevenLabs + ffmpeg
+│   ├── ai.py               # OpenRouter للأسئلة الحرة
+│   ├── voice.py            # ElevenLabs STT + TTS + ffmpeg
 │   ├── scheduler.py        # التذكيرات والإلغاء التلقائي
 │   ├── texts.py            # كل النصوص عربي/إنجليزي
 │   ├── seed/               # بيانات الطاولات والمنيو

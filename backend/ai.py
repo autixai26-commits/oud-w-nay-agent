@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-"""الأسئلة الحرة عبر OpenAI — SPEC 8.
+"""الأسئلة الحرة عبر OpenRouter — SPEC 8.
+
+OpenRouter يوفّر واجهة متوافقة مع OpenAI، فالفرق هو base_url والمفتاح فقط.
 
 قاعدتان لا تُترَكان للنموذج:
   * الكحول (SPEC 7.3) — يُكشف بالكلمات قبل النداء، ويُرد بالصيغة الحرفية.
@@ -18,7 +20,7 @@ from alcohol import tokens
 
 log = logging.getLogger(__name__)
 
-_URL = "https://api.openai.com/v1/chat/completions"
+_URL = "https://openrouter.ai/api/v1/chat/completions"
 _TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 # كلمات تدل على سؤال مباشر عن الكحول (SPEC 7.3).
@@ -95,15 +97,22 @@ MENU (the complete list — nothing else exists):
 """
 
 
+def _headers() -> dict:
+    """ترويسات OpenRouter. القيد ٤: لا تُطبع هذه الترويسات أبداً."""
+    return {"Authorization": "Bearer %s" % config.OPENROUTER_API_KEY,
+            "HTTP-Referer": "https://github.com/autixai26-commits/oud-w-nay-agent",
+            "X-Title": "Oud w Nay"}
+
+
 def answer(user_text: str, lang: str) -> str:
     """يعيد رد النموذج، أو الرد الثابت عند أي فشل."""
-    if not config.OPENAI_API_KEY:
+    if not config.OPENROUTER_API_KEY:
         return texts.t(lang, "unknown")
     try:
         with httpx.Client(timeout=_TIMEOUT) as c:
             r = c.post(_URL,
-                       headers={"Authorization": "Bearer %s" % config.OPENAI_API_KEY},
-                       json={"model": config.OPENAI_MODEL,
+                       headers=_headers(),
+                       json={"model": config.OPENROUTER_MODEL,
                              "temperature": 0.3,
                              "max_tokens": 400,
                              "messages": [
@@ -111,12 +120,12 @@ def answer(user_text: str, lang: str) -> str:
                                  {"role": "user", "content": user_text}]})
         if r.status_code != 200:
             # القيد ٤: لا نطبع المفتاح ولا الترويسات، فقط رمز الحالة.
-            log.error("openai رمز الحالة %s", r.status_code)
+            log.error("openrouter رمز الحالة %s", r.status_code)
             return texts.t(lang, "unknown")
         reply = r.json()["choices"][0]["message"]["content"].strip()
         return reply or texts.t(lang, "unknown")
     except Exception as exc:  # noqa: BLE001
-        log.error("openai استثناء: %s", type(exc).__name__)
+        log.error("openrouter استثناء: %s", type(exc).__name__)
         return texts.t(lang, "unknown")
 
 

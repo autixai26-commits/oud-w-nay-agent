@@ -40,8 +40,8 @@
 | Backend | Python 3.11 + FastAPI |
 | قاعدة البيانات | Supabase (PostgreSQL) — عبر `supabase-py` |
 | البوت | Telegram Bot API مباشرة عبر `httpx` + webhook على FastAPI (بدون مكتبات bot framework) |
-| نموذج الذكاء الاصطناعي | OpenAI — `gpt-4o` |
-| تحويل الصوت لنص | OpenAI `whisper-1` |
+| نموذج الذكاء الاصطناعي | OpenRouter — `anthropic/claude-sonnet-4-5` (واجهة متوافقة مع OpenAI، base_url مختلف) |
+| تحويل الصوت لنص | ElevenLabs Speech-to-Text (`scribe_v1`) |
 | تحويل النص لصوت | ElevenLabs (نفس الصوت المستخدم في مشروع سابق — سيزوّدك المالك بالـ voice_id) |
 | تحويل صيغة الصوت | ffmpeg (لتحويل mp3 → ogg/opus حتى ترسل رسالة صوتية حقيقية) |
 | استضافة الـ backend | Render (Docker — ضروري لتوفر ffmpeg) |
@@ -61,8 +61,8 @@ oud-w-nay-agent/
 │   ├── conversation.py         # آلة حالات المحادثة والأزرار
 │   ├── booking.py              # منطق الحجز والتوفر والقواعد
 │   ├── admin.py                # إشعارات الأدمن وأوامره
-│   ├── ai.py                   # OpenAI: الأسئلة الحرة + كشف اللغة
-│   ├── voice.py                # Whisper + ElevenLabs + ffmpeg
+│   ├── ai.py                   # OpenRouter: الأسئلة الحرة + كشف اللغة
+│   ├── voice.py                # ElevenLabs STT + TTS + ffmpeg
 │   ├── scheduler.py            # التذكيرات والإلغاء التلقائي
 │   ├── texts.py                # كل النصوص عربي/إنجليزي في مكان واحد
 │   ├── seed/menu.json
@@ -311,7 +311,7 @@ FAMILY_ONLY_WEEKDAYS = {3, 4, 5}  # الخميس، الجمعة، السبت
 - **النبرة:** رسمية ودودة. مؤنثة. لهجة أردنية طبيعية غير مبالغ فيها. بدون إيموجي مفرط (واحد أو اثنان في الرسالة كحد أقصى).
 - **اللغتان:** العربية والإنجليزية. في أول تفاعل: زرّان [🇯🇴 عربي] [🇬🇧 English]. تُحفظ اللغة لكل مستخدم ويمكن تغييرها من القائمة.
 - **كل النصوص** في `texts.py` بقاموس `AR` و`EN` — لا تكتب أي نص داخل منطق الكود.
-- **الأسئلة الحرة** تذهب لـ OpenAI مع system prompt يحوي معلومات المطعم والقواعد والمنيو.
+- **الأسئلة الحرة** تذهب لـ OpenRouter مع system prompt يحوي معلومات المطعم والقواعد والمنيو.
 - **إذا سأل عن شيء لا يعرفه:** "هاي المعلومة مش متوفرة عندي — بتقدر تتواصل معنا على 0770800120 وبيفيدوك 🙏". **ممنوع الاختراع تحت أي ظرف.**
 - البوت لا يخرج عن نطاق المطعم. أي موضوع خارجي ← إعادة توجيه لطيفة.
 
@@ -320,8 +320,8 @@ FAMILY_ONLY_WEEKDAYS = {3, 4, 5}  # الخميس، الجمعة، السبت
 ## 9. الصوت
 
 - **صوت داخل ← صوت خارج.** نص داخل ← نص خارج.
-- الرسالة الصوتية الواردة (ogg/opus) تُنزَّل → Whisper → نص → المعالجة الطبيعية.
-- الرد: ElevenLabs (mp3) → ffmpeg → ogg/opus → `sendVoice`.
+- الرسالة الصوتية الواردة (ogg/opus) تُنزَّل → ElevenLabs STT → نص → المعالجة الطبيعية.
+- الرد: ElevenLabs TTS (mp3) → ffmpeg → ogg/opus → `sendVoice`.
 - **مع كل رد صوتي يُرسل أيضاً نص مختصر + الأزرار** — لأن الأزرار لا تُنقر من الصوت.
 - الرد الصوتي يكون **مختصراً** (لا يتجاوز ~40 كلمة). التفاصيل الطويلة في النص.
 - إذا فشل ElevenLabs أو تجاوز الحصة: يرد نصاً فقط، ويُسجَّل الخطأ بصمت بدون إزعاج الزبون.
@@ -385,14 +385,14 @@ send_voice(user, audio_bytes, caption)
 توقّف بعد كل مرحلة واطلب التأكيد.
 
 **المرحلة 0 — التحضير**
-هيكل المشروع، `requirements.txt`، `Dockerfile` (مع ffmpeg)، `.env.example`، `.gitignore`، README بخطوات إنشاء الحسابات المطلوبة: Supabase، OpenAI، ElevenLabs، Render، Netlify، وبوت تليجرام من BotFather. اشرحها بالعربية خطوة بخطوة للمالك.
+هيكل المشروع، `requirements.txt`، `Dockerfile` (مع ffmpeg)، `.env.example`، `.gitignore`، README بخطوات إنشاء الحسابات المطلوبة: Supabase، OpenRouter، ElevenLabs، Render، Netlify، وبوت تليجرام من BotFather. اشرحها بالعربية خطوة بخطوة للمالك.
 
 **المرحلة 1 — قاعدة البيانات**
 جداول: `tables`, `reservations`, `booking_sessions`, `admins`, `menu_items`, `user_state`, `settings`.
 تحميل `seed/tables.json` و`seed/menu.json`. سكربت تحقق يطبع عدد الطاولات (26) وعدد الأصناف.
 
 **المرحلة 2 — بوت تليجرام الأساسي**
-Webhook · اختيار اللغة · القائمة الرئيسية · تصفح المنيو بالأزرار · الأسئلة الحرة عبر OpenAI · الردود الجاهزة (الموقع، الدوام، الهاتف، الهابي أور، الأرجيلة) · قاعدة الكحول.
+Webhook · اختيار اللغة · القائمة الرئيسية · تصفح المنيو بالأزرار · الأسئلة الحرة عبر OpenRouter · الردود الجاهزة (الموقع، الدوام، الهاتف، الهابي أور، الأرجيلة) · قاعدة الكحول.
 **تحقق:** المنيو يعمل بلغتين وكل مستوى ≤ 10 خيارات.
 
 **المرحلة 3 — تدفق الحجز + الموقع**
@@ -404,7 +404,7 @@ Webhook · اختيار اللغة · القائمة الرئيسية · تصف�
 **تحقق:** بأوقات مضغوطة (ثوانٍ بدل دقائق) نفّذ سيناريو كاملاً من الحجز حتى الإلغاء التلقائي.
 
 **المرحلة 5 — الصوت**
-Whisper · ElevenLabs · ffmpeg · نص وأزرار مع كل رد صوتي · التعامل مع الفشل.
+ElevenLabs STT · ElevenLabs TTS · ffmpeg · نص وأزرار مع كل رد صوتي · التعامل مع الفشل.
 
 **المرحلة 6 — اللوحة والمعايرة**
 `admin.html` بكلمة سر · `calibrate.html` لسحب النقاط وحفظ الإحداثيات في قاعدة البيانات.
@@ -418,7 +418,8 @@ Render (Docker) للـ backend · Netlify للموقع · ضبط الـ webhook 
 
 ```
 TELEGRAM_BOT_TOKEN=
-OPENAI_API_KEY=
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=anthropic/claude-sonnet-4-5
 ELEVENLABS_API_KEY=
 ELEVENLABS_VOICE_ID=
 SUPABASE_URL=

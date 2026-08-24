@@ -23,7 +23,7 @@ def _env(name: str, default: str = "") -> str:
 # ---------------------------------------------------------------- الأسرار
 # القيد ٤: لا تُطبع أي من هذه القيم في أي مكان، ولا حتى جزئياً.
 TELEGRAM_BOT_TOKEN = _env("TELEGRAM_BOT_TOKEN")
-OPENAI_API_KEY = _env("OPENAI_API_KEY")
+OPENROUTER_API_KEY = _env("OPENROUTER_API_KEY")
 ELEVENLABS_API_KEY = _env("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = _env("ELEVENLABS_VOICE_ID")
 SUPABASE_URL = _env("SUPABASE_URL")
@@ -32,7 +32,9 @@ ADMIN_SETUP_SECRET = _env("ADMIN_SETUP_SECRET")
 ADMIN_DASHBOARD_PASSWORD = _env("ADMIN_DASHBOARD_PASSWORD")
 
 # ---------------------------------------------------------- إعدادات عامة
-OPENAI_MODEL = _env("OPENAI_MODEL", "gpt-4o")
+OPENROUTER_MODEL = _env("OPENROUTER_MODEL", "anthropic/claude-sonnet-4-5")
+# نموذج ElevenLabs لتحويل الصوت لنص — المرحلة 5.
+ELEVENLABS_STT_MODEL = _env("ELEVENLABS_STT_MODEL", "scribe_v1")
 PUBLIC_WEB_URL = _env("PUBLIC_WEB_URL").rstrip("/")
 BACKEND_URL = _env("BACKEND_URL").rstrip("/")
 RESTAURANT_PHONE = _env("RESTAURANT_PHONE", "0770800120")
@@ -118,7 +120,7 @@ LARGE_GROUP_MIN = 11
 
 def secrets_status() -> dict:
     """حالة المفاتيح للتشخيص — SET أو MISSING فقط، بلا أي قيمة (القيد ٤)."""
-    names = ("TELEGRAM_BOT_TOKEN", "OPENAI_API_KEY", "ELEVENLABS_API_KEY",
+    names = ("TELEGRAM_BOT_TOKEN", "OPENROUTER_API_KEY", "ELEVENLABS_API_KEY",
              "ELEVENLABS_VOICE_ID", "SUPABASE_URL", "SUPABASE_SERVICE_KEY",
              "ADMIN_SETUP_SECRET", "ADMIN_DASHBOARD_PASSWORD",
              "PUBLIC_WEB_URL", "BACKEND_URL")
