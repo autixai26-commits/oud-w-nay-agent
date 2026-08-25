@@ -91,6 +91,12 @@ HARD RULES:
 3. Stay strictly within restaurant matters. Redirect anything else politely.
 4. Do not send menu images or links to images — text only.
 5. Keep replies short: three sentences at most unless listing menu items.
+6. Do NOT append the phone number to answers you can already answer. Give it
+   ONLY in rule 1's exact "I don't know" line, or when the guest asks for it,
+   or for delivery/large-group cases. Ending a correct answer with "call us"
+   makes the guest think you failed to understand.
+7. If the guest asks to BOOK, get a link, or CHANGE/CANCEL a booking, that is
+   handled elsewhere and never reaches you. Never tell such a guest to call.
 
 MENU (the complete list — nothing else exists):
 {_menu_block()}
@@ -136,3 +142,46 @@ def reply_to(user_text: str, lang: str) -> str:
     if is_delivery_question(user_text):
         return texts.t(lang, "no_delivery")
     return answer(user_text, lang)
+
+
+# --------------------------------------------------- كشف النية (SPEC 8)
+# طلب الحجز أو التعديل ليس سؤالاً عن معلومة، فلا يُمرَّر للنموذج:
+# النموذج لا يملك أدوات فيرد «لا أعرف» ويعطي رقم الهاتف — وهذا خطأ.
+_BOOK_AR = {"احجز", "أحجز", "احجزلي", "حجز", "رابط", "الرابط", "طاولة",
+            "طاوله", "بدي_احجز"}
+_BOOK_EN = {"book", "booking", "reserve", "reservation", "link", "table"}
+
+_MANAGE_AR = {"حجوزاتي", "حجزي", "الغي", "ألغي", "إلغاء", "الغاء",
+              "عدل", "عدّل", "أعدل", "تعديل", "غيّر", "غير", "أغير"}
+_MANAGE_EN = {"cancel", "modify", "change", "edit", "reschedule",
+              "bookings", "my"}
+
+# كلمات تدل على أن الجملة طلب لا استفسار.
+_WANT_AR = {"بدي", "بدنا", "ابغى", "أبغى", "ممكن", "اعطيني", "أعطيني",
+            "ابعتلي", "ابعث", "عطيني", "رجاء", "لو_سمحت"}
+_WANT_EN = {"want", "need", "give", "send", "please", "can", "could", "id"}
+
+
+def _toks(text: str) -> set:
+    return {w.lower() for w in tokens(text)}
+
+
+def detect_intent(text: str) -> str | None:
+    """يعيد 'manage' أو 'book' أو None.
+
+    الترتيب مقصود: «بدي أعدّل حجزي» فيها «حجز» و«أعدّل» معاً،
+    والتعديل هو النية الحقيقية.
+    """
+    t = _toks(text)
+    if not t:
+        return None
+    wants = bool(t & _WANT_AR) or bool(t & _WANT_EN)
+
+    if (t & _MANAGE_AR) or (t & _MANAGE_EN and (t & _BOOK_EN or wants)):
+        return "manage"
+    if (t & _BOOK_AR or t & _BOOK_EN) and wants:
+        return "book"
+    # «احجز» وحدها فعل أمر صريح لا يحتاج كلمة طلب.
+    if t & {"احجز", "أحجز", "احجزلي", "book", "reserve"}:
+        return "book"
+    return None

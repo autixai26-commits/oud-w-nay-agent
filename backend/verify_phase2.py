@@ -164,6 +164,8 @@ def main() -> int:
             pages = max(1, -(-n // conversation.PAGE_SIZE))
             print("    %-14s %3d صنف -> %d صفحة" % (sub["slug"], n, pages))
 
+    extra_checks()
+
     # المسح يمر بتدفق الحجز فيكتب حالة للمستخدم الوهمي — ننظّفها.
     db.client().table("user_state").delete().eq("user_id", "verify").execute()
 
@@ -171,6 +173,61 @@ def main() -> int:
     print("النتيجة: %s" % ("نجح كل الفحوصات" if ok else "في فحوصات فاشلة"))
     print("=" * 56)
     return 0 if ok else 1
+
+
+
+
+# ------------------------------------------------------------------ إضافات
+# حالات ولّدها اختبار حقيقي على تليجرام — تُبقى لتمنع رجوع نفس الخلل.
+def extra_checks() -> None:
+    print("\n--- كشف اللغة تلقائياً (SPEC 8 — شاشة اللغة أُلغيت) ---")
+    cases = [("مرحبا بدي احجز", "ar"), ("Hello, a table please", "en"),
+             ("شو الدوام", "ar"), ("what time do you close", "en")]
+    bad = [t for t, exp in cases if texts.detect_language(t) != exp]
+    check(not bad, "اللغة تُكتشف من نص الرسالة%s"
+          % ("" if not bad else " — فشل: %s" % bad))
+
+    user = User("telegram", "verify_lang", "verify_lang")
+    db.client().table("user_state").delete().eq(
+        "user_id", "verify_lang").execute()
+    sent.clear()
+    conversation.handle_text(user, "Hello, I want to book a table", None)
+    blob = "\n".join(s["text"] for s in sent)
+    check(texts.AR["choose_language"] not in blob,
+          "لا تظهر شاشة اختيار اللغة لمستخدم جديد")
+    check(db.get_language("telegram", "verify_lang") == "en",
+          "حُفظت اللغة المكتشفة (en)")
+
+    print("\n--- كشف النية قبل الأسئلة الحرة (SPEC 8) ---")
+    intents = [("أعطيني رابط جديد", "book"), ("بدي احجز طاولة", "book"),
+               ("give me a new link", "book"), ("بدي أعدّل حجزي", "manage"),
+               ("بدي ألغي حجزي", "manage"), ("cancel my booking", "manage"),
+               ("وين بتقعوا؟", None), ("قديش سعر التبولة", None)]
+    wrong = [t for t, exp in intents if ai.detect_intent(t) != exp]
+    check(not wrong, "النية تُكتشف صحيحة في %d حالة%s"
+          % (len(intents), "" if not wrong else " — فشل: %s" % wrong))
+
+    db.save_user_state("telegram", "verify_lang", language="ar", state="main")
+    sent.clear()
+    conversation.handle_text(user, "أعطيني رابط جديد", "ar")
+    blob = "\n".join(s["text"] for s in sent)
+    check(texts.t("ar", "ask_booking_type") in blob,
+          "«أعطيني رابط جديد» تبدأ تدفق الحجز لا رد «لا أعرف»")
+    check(texts.t("ar", "unknown") not in blob, "ولا تعطي رقم الهاتف")
+
+    sent.clear()
+    conversation.handle_text(user, "بدي أعدّل حجزي", "ar")
+    blob = "\n".join(s["text"] for s in sent)
+    check(texts.t("ar", "unknown") not in blob,
+          "«بدي أعدّل حجزي» لا تذهب لمسار «لا أعرف»")
+
+    print("\n--- منع رقم الهاتف في كل جواب (SPEC 8) ---")
+    prompt = ai.system_prompt("ar")
+    check("Do NOT append the phone number" in prompt,
+          "التوجيه صريح في system prompt")
+
+    db.client().table("user_state").delete().eq(
+        "user_id", "verify_lang").execute()
 
 
 if __name__ == "__main__":

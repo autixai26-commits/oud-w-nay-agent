@@ -342,3 +342,26 @@ def t(lang: str, key: str, **kwargs) -> str:
 def price(value, lang: str) -> str:
     """السعر بالدينار بثلاث خانات عشرية — SPEC 7.4."""
     return "%.3f %s" % (float(value), t(lang, "price_unit"))
+
+
+# ------------------------------------------------- كشف اللغة (SPEC 8)
+# شاشة اختيار اللغة الإجبارية أُلغيت: نكتشفها من أول رسالة ونبدأ فوراً.
+import re as _re
+
+_ARABIC = _re.compile(r"[\u0600-\u06FF]")
+_LATIN = _re.compile(r"[A-Za-z]")
+
+
+def detect_language(text: str) -> str:
+    """يعيد 'ar' أو 'en' حسب الحروف الغالبة في الرسالة.
+
+    نعتمد الحروف لا النموذج: الكشف يجب أن يكون فورياً ومجانياً ولا
+    يفشل عند انقطاع الشبكة. عند التعادل أو الغموض نرجّح العربية،
+    فهي لغة أغلب زبائن المطعم.
+    """
+    body = text or ""
+    ar = len(_ARABIC.findall(body))
+    en = len(_LATIN.findall(body))
+    if en > ar * 2 and en >= 3:
+        return "en"
+    return DEFAULT_LANG

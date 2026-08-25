@@ -116,11 +116,12 @@ def shorten(text: str) -> str:
     return " ".join(words[:MAX_VOICE_WORDS]).rstrip(",،.") + "…"
 
 
-def synthesize(text: str) -> bytes:
+def synthesize(text: str, lang: str = "ar") -> bytes:
     """ElevenLabs TTS. يعيد mp3، أو b"" عند أي فشل أو تجاوز حصة."""
     if not available():
         return b""
-    body = shorten(text)
+    # SPEC 9: الأرقام تُنطق بالكلمات، وإلا خرجت مشوّشة.
+    body = shorten(spoken_numbers(text, lang))
     if not body:
         return b""
     try:
@@ -138,9 +139,96 @@ def synthesize(text: str) -> bytes:
         return b""
 
 
-def render(text: str) -> bytes:
+def render(text: str, lang: str = "ar") -> bytes:
     """نص → رسالة صوتية جاهزة للإرسال. b"" يعني: أكمل نصاً فقط."""
-    mp3 = synthesize(text)
+    mp3 = synthesize(text, lang)
     if not mp3:
         return b""
     return to_ogg_opus(mp3)
+
+
+# ------------------------------------------- نطق الأرقام (SPEC 9)
+# محرّك الصوت ينطق "3.750" و"7:00" و"30/8" حرفاً حرفاً أو مشوّشاً،
+# فنحوّلها لكلمات منطوقة قبل الإرسال.
+
+_ONES = ("صفر", "واحد", "اثنين", "ثلاثة", "أربعة", "خمسة", "ستة",
+         "سبعة", "ثمانية", "تسعة", "عشرة", "أحد عشر", "اثنا عشر",
+         "ثلاثة عشر", "أربعة عشر", "خمسة عشر", "ستة عشر", "سبعة عشر",
+         "ثمانية عشر", "تسعة عشر")
+_TENS = {2: "عشرين", 3: "ثلاثين", 4: "أربعين", 5: "خمسين", 6: "ستين",
+         7: "سبعين", 8: "ثمانين", 9: "تسعين"}
+_HUNDREDS = {1: "مئة", 2: "مئتين", 3: "ثلاثمئة", 4: "أربعمئة", 5: "خمسمئة",
+             6: "ستمئة", 7: "سبعمئة", 8: "ثمانمئة", 9: "تسعمئة"}
+# الساعات تُنطق بصيغة الترتيب لا العدد: "السابعة" لا "سبعة".
+_HOURS = ("", "الواحدة", "الثانية", "الثالثة", "الرابعة", "الخامسة",
+          "السادسة", "السابعة", "الثامنة", "التاسعة", "العاشرة",
+          "الحادية عشرة", "الثانية عشرة")
+_MONTHS = ("", "كانون الثاني", "شباط", "آذار", "نيسان", "أيار", "حزيران",
+           "تموز", "آب", "أيلول", "تشرين الأول", "تشرين الثاني",
+           "كانون الأول")
+_ORDINAL_DAY = {1: "الأول", 2: "الثاني", 3: "الثالث"}
+
+
+def number_words_ar(n: int) -> str:
+    """يحوّل عدداً صحيحاً (0–9999) إلى كلمات عربية منطوقة."""
+    n = int(n)
+    if n < 0:
+        return "ناقص " + number_words_ar(-n)
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        tens, ones = divmod(n, 10)
+        return _TENS[tens] if not ones else "%s و%s" % (_ONES[ones], _TENS[tens])
+    if n < 1000:
+        hundreds, rest = divmod(n, 100)
+        head = _HUNDREDS[hundreds]
+        return head if not rest else "%s و%s" % (head, number_words_ar(rest))
+    thousands, rest = divmod(n, 1000)
+    if thousands == 1:
+        head = "ألف"
+    elif thousands == 2:
+        head = "ألفين"
+    else:
+        head = "%s آلاف" % _ONES[thousands]
+    return head if not rest else "%s و%s" % (head, number_words_ar(rest))
+
+
+def _price_ar(match) -> str:
+    dinars, fils = int(match.group(1)), int(match.group(2))
+    head = "دينار" if dinars == 1 else ("دينارين" if dinars == 2
+                                        else "%s دنانير" % number_words_ar(dinars))
+    out = head
+    if fils:
+        out += " و%s فلس" % number_words_ar(fils)
+    return out
+
+
+def _time_ar(match) -> str:
+    hour, minute = int(match.group(1)), int(match.group(2))
+    label = _HOURS[hour] if 1 <= hour <= 12 else number_words_ar(hour)
+    return label if minute == 0 else "%s و%s دقيقة" % (label,
+                                                        number_words_ar(minute))
+
+
+def _date_ar(match) -> str:
+    day, month = int(match.group(1)), int(match.group(2))
+    d = _ORDINAL_DAY.get(day) or number_words_ar(day)
+    m = _MONTHS[month] if 1 <= month <= 12 else number_words_ar(month)
+    return "%s من %s" % (d, m)
+
+
+def spoken_numbers(text: str, lang: str = "ar") -> str:
+    """يستبدل الأرقام بصيغتها المنطوقة. العربية فقط — الإنجليزية تُنطق سليمة."""
+    if lang != "ar" or not text:
+        return text or ""
+    out = text
+    # الترتيب مهم: السعر ثم الوقت ثم التاريخ ثم الأرقام المجرّدة.
+    out = re.sub(r"(\d+)\.(\d{3})\s*(?:د\.أ|دينار|JOD)?", _price_ar, out)
+    out = re.sub(r"(?<![0-9])(\d{1,2}):(\d{2})(?![0-9])", _time_ar, out)
+    out = re.sub(r"(?<![0-9])(\d{1,2})/(\d{1,2})(?![0-9])", _date_ar, out)
+    out = re.sub(r"(\d+)\s*%", lambda m: number_words_ar(m.group(1)) + " بالمئة", out)
+    # الجار المانع هو الأرقام والحروف اللاتينية وحدها: الحروف العربية
+    # والتطويل لا تمنع التحويل ("لـ4" تُنطق)، بينما "21ME29" يبقى رمزاً.
+    out = re.sub(r"(?<![0-9A-Za-z])\d{1,4}(?![0-9A-Za-z])",
+                 lambda m: number_words_ar(m.group(0)), out)
+    return out

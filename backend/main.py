@@ -143,9 +143,12 @@ def _dispatch(update: dict) -> None:
     if media:
         spoken = _transcribe_message(media)
         if not spoken:
-            # فشل النسخ: نعتذر نصاً بدل الصمت، ولا نزعج الزبون بالتفاصيل.
-            conversation.get_adapter(user.platform).send_text(
-                user, texts.t(lang or "ar", "voice_failed"))
+            # فشل النسخ ليس «معلومة غير متوفرة»: نعتذر ونطلب الإعادة أو
+            # الكتابة، ولا نعطي رقم الهاتف (SPEC 8 و 9).
+            reply_lang = lang or texts.DEFAULT_LANG
+            conversation.get_adapter(user.platform).send_buttons(
+                user, texts.t(reply_lang, "voice_failed"), [],
+                nav=[(texts.t(reply_lang, "btn_main_menu"), "H")])
             return
         user.voice = True
         conversation.handle_text(user, spoken, lang)
@@ -155,13 +158,31 @@ def _dispatch(update: dict) -> None:
 
 
 def _transcribe_message(media: dict) -> str:
-    """ينزّل الرسالة الصوتية من تليجرام وينسخها نصاً."""
+    """ينزّل الرسالة الصوتية من تليجرام وينسخها نصاً.
+
+    يسجّل كل حلقة على حدة: السلسلة أربع خطوات وأي واحدة قد تفشل،
+    وبدون هذا التسجيل يظهر الفشل موحّداً فلا يُعرف موضعه.
+    لا يُسجَّل أي مفتاح ولا رابط يحوي التوكن (القيد ٤).
+    """
     info = telegram_api.get_file(media.get("file_id", ""))
     path = (info.get("result") or {}).get("file_path")
     if not path:
+        log.error("صوت: getFile فشل — %s", info.get("description", "بلا مسار"))
         return ""
+
     audio = telegram_api.download_file(path)
-    return voice.transcribe(audio, filename=path.rsplit("/", 1)[-1])
+    if not audio:
+        log.error("صوت: تنزيل الملف فشل (%s)", path.rsplit("/", 1)[-1])
+        return ""
+
+    text = voice.transcribe(audio, filename=path.rsplit("/", 1)[-1])
+    if not text:
+        log.error("صوت: STT أعاد نصاً فارغاً (%d بايت، %s)",
+                  len(audio), config.ELEVENLABS_STT_MODEL)
+        return ""
+
+    log.info("صوت: نُسخت رسالة (%d بايت ← %d حرف)", len(audio), len(text))
+    return text
 
 
 # ------------------------------------------------------------ REST API
@@ -429,7 +450,7 @@ def api_diagnostics(token: str, ask: str = "") -> dict:
     try:
         r = _hx.post(voice._TTS_URL % config.ELEVENLABS_VOICE_ID,
                      headers={"xi-api-key": config.ELEVENLABS_API_KEY},
-                     json={"text": "اختبار", "model_id": voice.TTS_MODEL},
+                     json={"text": "probe", "model_id": voice.TTS_MODEL},
                      timeout=60)
         out["tts"] = {"status": r.status_code, "ok": r.status_code == 200,
                       "bytes": len(r.content) if r.status_code == 200 else 0}
@@ -460,7 +481,7 @@ def api_diagnostics(token: str, ask: str = "") -> dict:
         except Exception as exc:  # noqa: BLE001
             out["stt"] = {"ok": False, "exception": type(exc).__name__}
     else:
-        out["stt"] = {"ok": False, "skipped": "لا مقطع صوتي للفحص"}
+        out["stt"] = {"ok": False, "skipped": "no audio to probe"}
 
     # سؤال حقيقي يمر بالمسار الكامل الذي يمر به كلام الزبون.
     if ask:

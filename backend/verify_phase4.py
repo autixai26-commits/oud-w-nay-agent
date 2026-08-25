@@ -91,6 +91,19 @@ def wait(seconds: float, label: str) -> None:
     time.sleep(seconds)
 
 
+def wait_until(moment, label: str) -> None:
+    """ينتظر حتى لحظة محسوبة من الموعد نفسه لا بعدد ثوانٍ ثابت.
+
+    الانتظار الثابت يكسر الاختبار كلما أُضيف فحص جديد قبله: نوافذ
+    التذكير والحضور تُقاس من الموعد لا من بداية التشغيل، فيمرّ
+    الاختبار أو يسقط بحسب سرعة الشبكة لا بحسب صحة الكود.
+    """
+    delta = (moment - config.now_utc()).total_seconds()
+    if delta > 0:
+        print("     … انتظار %.0f ثانية (%s)" % (delta, label))
+        time.sleep(delta)
+
+
 def main() -> int:
     global ok
     print("=" * 62)
@@ -126,11 +139,16 @@ def main() -> int:
     conversation.handle_text(adm, "/admin " + config.ADMIN_SETUP_SECRET, None)
     check(db.is_admin("telegram", ADMIN_ID),
           "/admin يعمل لمستخدم جديد بلا لغة محفوظة")
+    # SPEC 8 بعد التعديل: لا شاشة لغة إطلاقاً — تُكتشف من نص الرسالة.
     to_customer.clear(); to_admin.clear()
+    db.client().table("user_state").delete().eq(
+        "user_id", "__nolang__").execute()
     conversation.handle_text(User("telegram", "__nolang__", "__nolang__"),
-                             "مرحبا", None)
-    check(any("لغتك" in m for m in to_customer),
-          "الرسالة العادية بلا لغة ما زالت تعرض شاشة اللغة")
+                             "Hello, I want a table", None)
+    check(not any(texts.AR["choose_language"] in m for m in to_customer),
+          "لا تظهر شاشة اختيار اللغة لمستخدم جديد")
+    check(db.get_language("telegram", "__nolang__") == "en",
+          "اللغة تُكتشف وتُحفظ من أول رسالة")
     db.client().table("user_state").delete().eq(
         "user_id", "__nolang__").execute()
 
@@ -140,7 +158,7 @@ def main() -> int:
     # الموعد بعد 40 دقيقة مضغوطة = 40 ثانية حقيقية. المسافة ضرورية
     # لتنفصل المراحل: التذكير عند الموعد−30، سؤال الحضور عند +10،
     # والإلغاء التلقائي عند +30.
-    target_utc = config.now_utc() + config.minutes(40)
+    target_utc = config.now_utc() + config.minutes(60)
     table = booking.available_tables(day, 2, "family")[0]
 
     res = db.client().table("reservations").insert({
@@ -154,7 +172,9 @@ def main() -> int:
 
     to_admin.clear()
     admin.notify_new_reservation(res)
-    check(len(to_admin) == 1, "وصل إشعار لكل الأدمنية (%d)" % len(to_admin))
+    n_admins = len(db.all_admins())
+    check(len(to_admin) == n_admins,
+          "وصل إشعار لكل الأدمنية (%d من %d)" % (len(to_admin), n_admins))
     body = to_admin[0]["text"]
     check(all(x in body for x in ("V4TEST", "زبون اختبار", "0790000000")),
           "الإشعار يحوي الرمز والاسم والهاتف")
@@ -193,6 +213,9 @@ def main() -> int:
     # -------------------------------- 5) تذكير الزبون قبل الموعد
     print("\n5) تذكير الزبون قبل الموعد بـ30 دقيقة (SPEC 6.4)")
     to_customer.clear()
+    # نافذة التذكير [الموعد − 30، الموعد) — ندخلها من بدايتها.
+    wait_until(target_utc - config.minutes(config.REMINDER_BEFORE_MIN)
+               + config.minutes(2), "دخول نافذة التذكير")
     counts = scheduler.tick()
     check(counts["reminder"] == 1, "انطلق التذكير")
     rem_head = texts.AR["reminder"].split("{")[0].strip()
@@ -201,7 +224,8 @@ def main() -> int:
 
     # ------------------------- 6) سؤال الحضور بعد الموعد بـ10 دقائق
     print("\n6) سؤال الحضور بعد الموعد (SPEC 6.4)")
-    wait(30, "الموعد + 10 دقائق مضغوطة")
+    wait_until(target_utc + config.minutes(config.ATTENDANCE_ASK_AFTER_MIN)
+               + config.minutes(1), "الموعد + 10 دقائق مضغوطة")
     to_admin.clear()
     counts = scheduler.tick()
     check(counts["attendance"] == 1, "انطلق سؤال الحضور")
@@ -211,7 +235,8 @@ def main() -> int:
 
     # --------------------------------- 7) الإلغاء التلقائي
     print("\n7) الإلغاء التلقائي بعد الموعد بـ30 دقيقة (SPEC 6.4)")
-    wait(25, "الموعد + 30 دقيقة مضغوطة")
+    wait_until(target_utc + config.minutes(config.AUTO_CANCEL_AFTER_MIN)
+               + config.minutes(1), "الموعد + 30 دقيقة مضغوطة")
     to_customer.clear(); to_admin.clear()
     counts = scheduler.tick()
     check(counts["auto_cancel"] == 1, "انطلق الإلغاء التلقائي")
@@ -275,6 +300,32 @@ def main() -> int:
         check(handled and len(to_admin) >= 1, "%-22s ردّ على الأدمن" % cmd)
     check(admin.handle_command(adm, "/notacommand", "ar") is False,
           "أمر مجهول لا يُستهلك فيصل للأسئلة الحرة")
+
+    # ---------------------------- 11) صدى الأزرار كرسالة من الزبون
+    print("\n11) الأزرار تظهر كرسالة من الزبون (لوحة الرد)")
+    captured = {}
+
+    def spy(chat_id, text, reply_markup=None):
+        captured["markup"] = reply_markup
+        return {"ok": True, "result": {"message_id": 1}}
+
+    real_send = telegram_api.send_message
+    telegram_api.send_message = spy
+    try:
+        tg = platform_adapter.TelegramAdapter()
+        tg.send_buttons(cust, "اختر", [("عائلة", "B:t:family")],
+                        nav=[("إلغاء", "B:x")])
+    finally:
+        telegram_api.send_message = real_send
+
+    mk = captured.get("markup") or {}
+    check("keyboard" in mk and "inline_keyboard" not in mk,
+          "تُستعمل لوحة الرد لا الأزرار الداخلية — فيظهر الاختيار فقاعةً")
+    labels = [b["text"] for row in mk.get("keyboard", []) for b in row]
+    check("عائلة" in labels and "إلغاء" in labels, "نصوص الأزرار كما هي")
+    kb = ((db.get_user_state("telegram", UID) or {}).get("data") or {}).get("_kb")
+    check(bool(kb) and kb.get("عائلة") == "B:t:family",
+          "خريطة النص ← الإجراء محفوظة لترجمة ردّ الزبون")
 
     cleanup()
     print("\n" + "=" * 62)

@@ -150,11 +150,61 @@ def main() -> int:
     for lang in ("ar", "en"):
         msg = texts.t(lang, "voice_failed")
         check(bool(msg) and "{" not in msg, "%s: نص جاهز بلا متغيّرات" % lang)
+        check(config.RESTAURANT_PHONE not in msg,
+              "%s: الاعتذار لا يعطي رقم الهاتف — ليس «معلومة غير متوفرة»"
+              % lang)
+
+    extra_checks()
 
     print("\n" + "=" * 62)
     print("النتيجة: %s" % ("نجح كل الفحوصات" if ok else "في فحوصات فاشلة"))
     print("=" * 62)
     return 0 if ok else 1
+
+
+
+
+# ------------------------------------------------------------------ إضافات
+# ولّدها اختبار حقيقي على تليجرام: الأرقام كانت تُنطق مشوّشة.
+def extra_checks() -> None:
+    print("\n8) نطق الأرقام بالكلمات (SPEC 9)")
+    cases = [
+        ("سعر التبولة 3.750 د.أ", ["ثلاثة", "دنانير", "سبعمئة"], ["3.750"]),
+        ("موعدك الساعة 7:00", ["السابعة"], ["7:00"]),
+        ("يوم 30/8", ["ثلاثين", "آب"], ["30/8"]),
+        ("خصم 25%", ["خمسة وعشرين", "بالمئة"], ["25%"]),
+        ("طاولة 12 لـ4 أشخاص", ["اثنا عشر", "أربعة"], ["12"]),
+    ]
+    for src, must, must_not in cases:
+        out = voice.spoken_numbers(src, "ar")
+        good = all(w in out for w in must) and all(w not in out
+                                                   for w in must_not)
+        check(good, "«%s» ← %s" % (src, out))
+
+    check(voice.spoken_numbers("رمز الحجز 21ME29", "ar").find("21ME29") >= 0,
+          "رمز الحجز الأبجدي الرقمي يبقى كما هو")
+    check(voice.spoken_numbers("Table 4 at 7:00", "en") == "Table 4 at 7:00",
+          "الإنجليزية لا تُحوَّل — تُنطق سليمة أصلاً")
+    check(voice.number_words_ar(0) == "صفر"
+          and voice.number_words_ar(139) == "مئة وتسعة وثلاثين"
+          and voice.number_words_ar(1000) == "ألف",
+          "محوّل الأعداد سليم على حالات حدّية")
+
+    print("\n9) التحويل يمر فعلياً قبل محرّك الصوت")
+    seen = {}
+    real = voice.shorten
+
+    def spy(text):
+        seen["text"] = text
+        return real(text)
+
+    voice.shorten = spy
+    try:
+        voice.synthesize("سعر التبولة 3.750 د.أ", "ar")
+    finally:
+        voice.shorten = real
+    check("ثلاثة" in seen.get("text", ""),
+          "النص الواصل للتوليد منطوق لا رقمي")
 
 
 if __name__ == "__main__":

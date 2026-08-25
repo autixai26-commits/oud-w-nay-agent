@@ -634,10 +634,14 @@ def handle_text(user: User, text: str, lang) -> None:
             user, stripped, lang or texts.DEFAULT_LANG):
         return None
 
-    # أول تفاعل: اختيار اللغة قبل أي شيء آخر (SPEC 8).
+    # SPEC 8: شاشة اختيار اللغة أُلغيت. نكتشف اللغة من أول رسالة
+    # ونبدأ بها مباشرةً، ويبقى زر التبديل في القائمة الرئيسية.
     if not lang:
-        _screen_language(adapter, user)
-        return None
+        lang = texts.detect_language(stripped)
+        db.save_user_state(user.platform, user.user_id, language=lang)
+        if stripped in ("/start", "start", ""):
+            _screen_main(adapter, user, lang, greeting=True)
+            return None
 
     if stripped in ("/start", "/menu", "start"):
         _screen_main(adapter, user, lang, greeting=stripped != "/menu")
@@ -646,6 +650,20 @@ def handle_text(user: User, text: str, lang) -> None:
     # إدخال ضمن تدفق الحجز له الأولوية على الأسئلة الحرة.
     if _handle_input(adapter, user, lang, _state(user).get("state"), stripped):
         return None
+
+    # ضغطة زر تصل كرسالة نصية عادية (لوحة الرد)، فنترجم نصّها
+    # إلى الإجراء المخزّن ونمرّرها لمسار الأزرار نفسه.
+    action = (_data(user).get("_kb") or {}).get(stripped)
+    if action:
+        return handle_callback(user, action, lang)
+
+    # SPEC 8: طلب الحجز أو التعديل نيّة لا سؤال — يبدأ التدفق المقابل
+    # ولا يُمرَّر للنموذج، فالنموذج بلا أدوات يرد «لا أعرف» ويعطي الهاتف.
+    intent = ai.detect_intent(stripped)
+    if intent == "book":
+        return _ask_type(adapter, user, lang)
+    if intent == "manage":
+        return _screen_my_bookings(adapter, user, lang)
 
     # سؤال حر: القواعد الثابتة تُفرض داخل ai.reply_to قبل النموذج.
     adapter.send_buttons(user, ai.reply_to(stripped, lang), [],

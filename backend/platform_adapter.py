@@ -18,6 +18,11 @@ MAX_OPTIONS_PER_LEVEL = 10   # SPEC 7.1 و 11
 MAX_QUICK_BUTTONS = 3        # SPEC 11 — ما زاد يُعرض كقائمة
 
 
+def texts_default() -> str:
+    import texts
+    return texts.DEFAULT_LANG
+
+
 class ButtonLimitError(ValueError):
     """يُرفع عند تجاوز حد الخيارات — خطأ برمجي لا يُخفى."""
 
@@ -77,14 +82,29 @@ class BaseAdapter:
 class TelegramAdapter(BaseAdapter):
     platform = "telegram"
 
+    # SPEC — تأكيد بصري للزبون: نستعمل لوحة الرد لا الأزرار الداخلية.
+    # تليجرام لا يسمح لبوت أن يرسل رسالة باسم الزبون، والطريقة الوحيدة
+    # لظهور اختياره كفقاعة على يمين الشاشة هي أن يضغط زراً يُرسل نصه
+    # رسالةً منه فعلاً. لذلك نخزّن خريطة (نص الزر ← الإجراء) في حالة
+    # المستخدم، ونترجم الرسالة الواردة إلى الإجراء المقابل.
     @staticmethod
     def _markup(buttons, nav):
-        rows = [[{"text": label, "callback_data": data}] for label, data in buttons]
+        rows = [[{"text": label}] for label, _ in buttons]
         if nav:
-            # صف التنقّل يوضع أفقياً وبحد أقصى 3 — يقابل الأزرار السريعة بواتساب.
-            rows.append([{"text": label, "callback_data": data}
-                         for label, data in nav[:MAX_QUICK_BUTTONS]])
-        return {"inline_keyboard": rows}
+            rows.append([{"text": label}
+                         for label, _ in nav[:MAX_QUICK_BUTTONS]])
+        return {"keyboard": rows, "resize_keyboard": True,
+                "one_time_keyboard": False, "is_persistent": True}
+
+    @staticmethod
+    def _remember(user: User, buttons, nav) -> None:
+        """يحفظ خريطة نصوص الأزرار لهذه الشاشة ليُترجم ردّ الزبون."""
+        import db
+        mapping = {label: data for label, data in list(buttons) + list(nav or [])}
+        st = db.get_user_state(user.platform, user.user_id) or {}
+        data = dict(st.get("data") or {})
+        data["_kb"] = mapping
+        db.save_user_state(user.platform, user.user_id, data=data)
 
     def _maybe_voice(self, user: User, text: str) -> None:
         """SPEC 9: صوت داخل ← صوت خارج.
@@ -95,8 +115,11 @@ class TelegramAdapter(BaseAdapter):
         if not user.voice or user.voiced:
             return
         user.voiced = True
+        import db as _db
         import voice
-        audio = voice.render(text)
+        lang = (_db.get_language(user.platform, user.user_id)
+                or texts_default())
+        audio = voice.render(text, lang)
         if audio:
             telegram_api.send_voice(user.chat_id or user.user_id, audio)
 
@@ -107,6 +130,8 @@ class TelegramAdapter(BaseAdapter):
     def send_buttons(self, user: User, text: str, buttons, nav=None) -> None:
         _validate(buttons)
         self._maybe_voice(user, text)
+        if buttons or nav:
+            self._remember(user, buttons, nav)
         telegram_api.send_message(user.chat_id or user.user_id, text,
                                   self._markup(buttons, nav))
 
