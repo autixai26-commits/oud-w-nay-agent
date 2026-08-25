@@ -118,6 +118,22 @@ def main() -> int:
     check(admin.try_register(adm, config.ADMIN_SETUP_SECRET, "")
           == "admin_already", "التسجيل مرتين لا يكرّر")
 
+    # الأدمن يسجّل نفسه قبل أن يختار لغة. لو ابتلعت بوابةُ اللغة الأمرَ
+    # لتعذّر التسجيل إطلاقاً — وهذا ما حدث فعلاً على البوت الحي.
+    db.client().table("admins").delete().eq("user_id", ADMIN_ID).execute()
+    db.client().table("user_state").delete().eq("user_id", ADMIN_ID).execute()
+    to_customer.clear(); to_admin.clear()
+    conversation.handle_text(adm, "/admin " + config.ADMIN_SETUP_SECRET, None)
+    check(db.is_admin("telegram", ADMIN_ID),
+          "/admin يعمل لمستخدم جديد بلا لغة محفوظة")
+    to_customer.clear(); to_admin.clear()
+    conversation.handle_text(User("telegram", "__nolang__", "__nolang__"),
+                             "مرحبا", None)
+    check(any("لغتك" in m for m in to_customer),
+          "الرسالة العادية بلا لغة ما زالت تعرض شاشة اللغة")
+    db.client().table("user_state").delete().eq(
+        "user_id", "__nolang__").execute()
+
     # ------------------------------- 2) حجز جديد وإشعار الأدمن
     print("\n2) حجز جديد وإشعار الأدمن (SPEC 6.3.2)")
     day = config.today_local()

@@ -625,18 +625,22 @@ def _handle_input(adapter, user, lang, state, text) -> bool:
 def handle_text(user: User, text: str, lang) -> None:
     adapter = get_adapter(user.platform)
 
-    # أول تفاعل: اختيار اللغة قبل أي شيء (SPEC 8).
+    stripped = (text or "").strip()
+
+    # الأوامر تُفحص قبل بوابة اللغة عمداً. الأدمن يسجّل نفسه بـ /admin
+    # قبل أن يختار لغة، فلو سبقت البوابةُ الأمرَ لابتلعته وأعادت شاشة
+    # اللغة — ولا سبيل للتسجيل إطلاقاً (SPEC 10.1 و 10.2).
+    if stripped.startswith("/") and admin.handle_command(
+            user, stripped, lang or texts.DEFAULT_LANG):
+        return None
+
+    # أول تفاعل: اختيار اللغة قبل أي شيء آخر (SPEC 8).
     if not lang:
         _screen_language(adapter, user)
         return None
 
-    stripped = (text or "").strip()
     if stripped in ("/start", "/menu", "start"):
         _screen_main(adapter, user, lang, greeting=stripped != "/menu")
-        return None
-
-    # أوامر الأدمن تُفحص قبل أي شيء آخر (SPEC 10.2).
-    if stripped.startswith("/") and admin.handle_command(user, stripped, lang):
         return None
 
     # إدخال ضمن تدفق الحجز له الأولوية على الأسئلة الحرة.
