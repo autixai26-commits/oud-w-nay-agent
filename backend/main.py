@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import admin
+import ai
 import booking
 import config
 import conversation
@@ -382,3 +383,84 @@ def api_admin_positions(body: PositionsBody) -> dict:
         saved += 1
     log.info("حُفظت إحداثيات %d طاولة", saved)
     return {"ok": True, "saved": saved}
+
+
+@app.get("/api/admin/diagnostics")
+def api_diagnostics(token: str) -> dict:
+    """يفحص كل خدمة خارجية من داخل الحاوية نفسها.
+
+    وُجدت لأن نجاح الاختبار محلياً لا يعني نجاحه على Render: المفاتيح
+    هناك نسخة أخرى قد تكون ناقصة أو مختلفة. لا تُعاد أي قيمة سرية —
+    رمز الحالة ونتيجة نجاح/فشل فقط (القيد ٤).
+    """
+    if not _guard(token):
+        return {"ok": False, "reason": "unauthorized"}
+
+    out: dict = {"ffmpeg": voice.ffmpeg_ready(),
+                 "ffmpeg_bin": voice.ffmpeg_bin()}
+
+    # طول المفتاح يكشف القصّ أو اللصق الناقص بلا كشف قيمته.
+    out["key_lengths"] = {
+        "openrouter": len(config.OPENROUTER_API_KEY),
+        "elevenlabs": len(config.ELEVENLABS_API_KEY),
+        "voice_id": len(config.ELEVENLABS_VOICE_ID),
+        "telegram": len(config.TELEGRAM_BOT_TOKEN),
+    }
+    out["model"] = config.OPENROUTER_MODEL
+
+    import httpx as _hx
+
+    # --- OpenRouter
+    try:
+        r = _hx.post("https://openrouter.ai/api/v1/chat/completions",
+                     headers=ai._headers(),
+                     json={"model": config.OPENROUTER_MODEL, "max_tokens": 5,
+                           "messages": [{"role": "user", "content": "hi"}]},
+                     timeout=40)
+        out["openrouter"] = {"status": r.status_code,
+                             "ok": r.status_code == 200}
+        if r.status_code != 200:
+            out["openrouter"]["error"] = str(
+                r.json().get("error", {}).get("message", ""))[:160]
+    except Exception as exc:  # noqa: BLE001
+        out["openrouter"] = {"ok": False, "exception": type(exc).__name__}
+
+    # --- ElevenLabs TTS
+    try:
+        r = _hx.post(voice._TTS_URL % config.ELEVENLABS_VOICE_ID,
+                     headers={"xi-api-key": config.ELEVENLABS_API_KEY},
+                     json={"text": "اختبار", "model_id": voice.TTS_MODEL},
+                     timeout=60)
+        out["tts"] = {"status": r.status_code, "ok": r.status_code == 200,
+                      "bytes": len(r.content) if r.status_code == 200 else 0}
+        if r.status_code != 200:
+            out["tts"]["error"] = r.text[:160]
+        mp3 = r.content if r.status_code == 200 else b""
+    except Exception as exc:  # noqa: BLE001
+        out["tts"] = {"ok": False, "exception": type(exc).__name__}
+        mp3 = b""
+
+    # --- ffmpeg ثم STT على نفس المقطع، فنفحص السلسلة كما يمر بها الصوت
+    ogg = voice.to_ogg_opus(mp3) if mp3 else b""
+    out["ogg"] = {"ok": bool(ogg), "bytes": len(ogg),
+                  "is_ogg": ogg[:4] == b"OggS" if ogg else False}
+    if ogg:
+        try:
+            r = _hx.post(voice._STT_URL,
+                         headers={"xi-api-key": config.ELEVENLABS_API_KEY},
+                         files={"file": ("a.ogg", ogg, "audio/ogg")},
+                         data={"model_id": config.ELEVENLABS_STT_MODEL},
+                         timeout=60)
+            out["stt"] = {"status": r.status_code, "ok": r.status_code == 200,
+                          "model": config.ELEVENLABS_STT_MODEL}
+            if r.status_code == 200:
+                out["stt"]["text"] = (r.json().get("text") or "")[:60]
+            else:
+                out["stt"]["error"] = r.text[:200]
+        except Exception as exc:  # noqa: BLE001
+            out["stt"] = {"ok": False, "exception": type(exc).__name__}
+    else:
+        out["stt"] = {"ok": False, "skipped": "لا مقطع صوتي للفحص"}
+
+    out["ok"] = True
+    return out
