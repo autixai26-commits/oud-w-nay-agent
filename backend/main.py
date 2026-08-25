@@ -386,7 +386,7 @@ def api_admin_positions(body: PositionsBody) -> dict:
 
 
 @app.get("/api/admin/diagnostics")
-def api_diagnostics(token: str) -> dict:
+def api_diagnostics(token: str, ask: str = "") -> dict:
     """يفحص كل خدمة خارجية من داخل الحاوية نفسها.
 
     وُجدت لأن نجاح الاختبار محلياً لا يعني نجاحه على Render: المفاتيح
@@ -461,6 +461,14 @@ def api_diagnostics(token: str) -> dict:
             out["stt"] = {"ok": False, "exception": type(exc).__name__}
     else:
         out["stt"] = {"ok": False, "skipped": "لا مقطع صوتي للفحص"}
+
+    # سؤال حقيقي يمر بالمسار الكامل الذي يمر به كلام الزبون.
+    if ask:
+        try:
+            out["ask"] = {"q": ask, "a": ai.reply_to(ask, "ar")[:300]}
+        except Exception as exc:  # noqa: BLE001
+            out["ask"] = {"q": ask, "exception": type(exc).__name__,
+                          "detail": str(exc)[:200]}
 
     out["ok"] = True
     return out
