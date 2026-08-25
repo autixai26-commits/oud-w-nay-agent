@@ -81,7 +81,12 @@ def health() -> dict:
     return {"status": "ok", "database": database,
             "secrets": config.secrets_status(),
             "timezone": config.TIMEZONE,
-            "test_time_scale": config.TEST_TIME_SCALE}
+            "test_time_scale": config.TEST_TIME_SCALE,
+            # بدون ffmpeg يتحوّل الرد الصوتي إلى نص بصمت، فنكشفه هنا
+            # بدل أن نكتشفه من شكوى زبون (SPEC 9).
+            "ffmpeg": voice.ffmpeg_ready(),
+            "voice_keys": voice.available(),
+            "scheduler_seconds": scheduler.interval_seconds()}
 
 
 @app.post(WEBHOOK_PATH)
