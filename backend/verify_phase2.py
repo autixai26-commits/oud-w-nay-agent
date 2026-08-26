@@ -169,6 +169,8 @@ def main() -> int:
     extra_checks()
     extra_checks_v2()
     extra_checks_v3()
+    audit_intents()
+    voice_list_checks()
 
     # المسح يمر بتدفق الحجز فيكتب حالة للمستخدم الوهمي — ننظّفها.
     db.client().table("user_state").delete().eq("user_id", "verify").execute()
@@ -203,10 +205,11 @@ def extra_checks() -> None:
           "حُفظت اللغة المكتشفة (en)")
 
     print("\n--- كشف النية قبل الأسئلة الحرة (SPEC 8) ---")
-    intents = [("أعطيني رابط جديد", "book"), ("بدي احجز طاولة", "book"),
-               ("give me a new link", "book"), ("بدي أعدّل حجزي", "manage"),
-               ("بدي ألغي حجزي", "manage"), ("cancel my booking", "manage"),
-               ("وين بتقعوا؟", None), ("قديش سعر التبولة", None)]
+    # العقد تغيّر: detect_intent تعيد وجهة زر لا اسم نية.
+    intents = [("أعطيني رابط جديد", "B"), ("بدي احجز طاولة", "B"),
+               ("give me a new link", "B"), ("بدي أعدّل حجزي", "R"),
+               ("بدي ألغي حجزي", "R"), ("cancel my booking", "R"),
+               ("قديش سعر التبولة", None)]
     wrong = [t for t, exp in intents if ai.detect_intent(t) != exp]
     check(not wrong, "النية تُكتشف صحيحة في %d حالة%s"
           % (len(intents), "" if not wrong else " — فشل: %s" % wrong))
@@ -268,7 +271,7 @@ def extra_checks_v2() -> None:
     print("\n--- كشف النية من النص المكتوب (صيغ الهمزة والشدّة) ---")
     forms = ["بدي اعدل", "بدي أعدّل", "بدي أعدل حجزي", "بدي الغي",
              "بدي إلغاء", "بدّل حجزي", "بدي أغيّر موعدي"]
-    bad = [f for f in forms if ai.detect_intent(f) != "manage"]
+    bad = [f for f in forms if ai.detect_intent(f) != "R"]
     check(not bad, "كل صيغ «تعديل/إلغاء» المكتوبة تُكشف%s"
           % ("" if not bad else " — فشل: %s" % bad))
 
@@ -334,20 +337,21 @@ def extra_checks_v3() -> None:
         "بدي أجّل موعدي", "بدل حجزي", "cancel my booking",
         "change my reservation",
     ]
-    bad = [f for f in manage_forms if ai.detect_intent(f) != "manage"]
+    bad = [f for f in manage_forms if ai.detect_intent(f) != "R"]
     check(not bad, "كل الـ%d صيغة تُكشف كـ manage%s"
           % (len(manage_forms), "" if not bad else " — فشل: %s" % bad))
 
     book_forms = ["بدي احجز", "بدي احجز طاولة", "أعطيني رابط جديد",
                   "بدي طاولة لأربعة", "احجزلي طاولة", "بدي حجز",
                   "I want to book a table"]
-    bad = [f for f in book_forms if ai.detect_intent(f) != "book"]
+    bad = [f for f in book_forms if ai.detect_intent(f) != "B"]
     check(not bad, "وكل الـ%d صيغة حجز جديد تُكشف كـ book%s"
           % (len(book_forms), "" if not bad else " — فشل: %s" % bad))
 
-    neutral = ["وين بتقعوا", "شو الدوام", "قديش سعر التبولة",
-               "في عندكم أرجيلة", "شو المنيو", "كيف الحال",
-               "وين المطعم", "في موقف سيارات"]
+    # بعد التدقيق المنهجي صار الدوام والموقع والمنيو والأرجيلة تُوجَّه
+    # لأزرارها عمداً، فلم يبقَ محايداً إلا ما لا زرّ له.
+    neutral = ["قديش سعر التبولة", "كيف الحال", "في موقف سيارات",
+               "بتقبلوا فيزا", "في واي فاي", "عندكم كراسي أطفال"]
     bad = [f for f in neutral if ai.detect_intent(f) is not None]
     check(not bad, "والأسئلة العادية تبقى بلا نية%s"
           % ("" if not bad else " — التُقطت خطأً: %s" % bad))
@@ -390,6 +394,103 @@ def extra_checks_v3() -> None:
           "لا تُعرض فترة انقضت بالكامل")
     check(all(booking.available_hours(d) for d in booking.bookable_days()),
           "ولا يُعرض يوم لا يمكن الحجز فيه")
+
+
+# ---------------------------------------------------------------- تدقيق
+# فحص منهجي: لكل زر في كل قائمة، صيغ كتابة حرة متعددة تعبّر عن قصده.
+# وُلّد بعد أن كشف الاستعمال الحقيقي أن بعض النوايا لا تصل تدفق الزر.
+INTENT_CASES = [
+    ("M", "🍽️ المنيو", [
+        "بدي أشوف المنيو", "وريني المنيو", "شو عندكم أكل", "بدي اطلب",
+        "المنيو لو سمحت", "ممكن قائمة الطعام", "show me the menu",
+        "what food do you have"]),
+    ("M:g:food", "أكل ← الفئات", [
+        "شو في مقبلات", "عندكم مشاوي؟", "بدي أشوف الحلويات",
+        "في سلطات عندكم", "do you have appetizers"]),
+    ("M:g:drinks", "مشروبات", [
+        "شو عندكم مشروبات", "في عصائر؟", "بدي أشوف المشروبات",
+        "عندكم قهوة", "what drinks do you have"]),
+    ("I:shisha_info", "💨 الأرجيلة", [
+        "عندكم أرجيلة؟", "شو نكهات الأرجيلة", "في شيشة",
+        "بدي أرجيلة", "do you have shisha"]),
+    ("B", "🪑 احجز طاولة", [
+        "بدي احجز", "بدي احجز طاولة", "فيه طاولة فاضية؟",
+        "بدي مكان لأربعة", "أعطيني رابط الحجز", "احجزلي طاولة بكرا",
+        "I want to book a table", "can I reserve a table"]),
+    ("R", "📋 حجوزاتي", [
+        "وين حجزي", "بدي اشوف الحجوزات تبعوني", "شو حجزت",
+        "بدي الغي", "غيرلي الموعد", "بدي أعدّل حجزي", "حجوزاتي",
+        "كم حجز عندي", "cancel my booking", "show my reservations"]),
+    ("I:location", "📍 الموقع", [
+        "وين مكانكم", "وين المطعم", "شو عنوانكم", "كيف بوصلكم",
+        "where are you located", "what is your address"]),
+    ("I:hours", "🕐 الدوام", [
+        "ايش أوقات الدوام", "امتى بتفتحوا", "شو الدوام عندكم",
+        "بتسكروا الساعة كم", "what are your opening hours"]),
+    ("I:phone", "☎️ الهاتف", [
+        "شو رقمكم", "بدي رقم التلفون", "كيف بتصل فيكم",
+        "ممكن رقم الهاتف", "what is your phone number"]),
+    ("I:happy_hour", "🎉 هابي أور", [
+        "في خصم؟", "شو عروضكم", "احكيلي عن الهابي أور",
+        "في تخفيضات", "do you have any offers"]),
+    ("H", "🏠 القائمة الرئيسية", [
+        "رجعني للبداية", "بلش من جديد", "ارجع للقائمة الرئيسية",
+        "ابدا من جديد", "back to start"]),
+    (None, "أسئلة حرة — يجب ألا تُلتقط", [
+        "كيف الحال", "في باركنج؟", "شو أخبارك", "بتقبلوا فيزا؟",
+        "قديش سعر التبولة", "في واي فاي", "عندكم كراسي أطفال",
+        "شكراً إلكم"]),
+]
+
+
+def audit_intents() -> None:
+    print(chr(10) + "--- تدقيق منهجي: الكلام الحر مقابل الأزرار ---")
+    bad = []
+    total = 0
+    for expect, label, phrases in INTENT_CASES:
+        for ph in phrases:
+            total += 1
+            got = ai.detect_intent(ph)
+            if got != expect:
+                bad.append("%s: «%s» -> %s (متوقع %s)"
+                           % (label, ph, got, expect))
+    check(not bad, "%d صيغة حرة توجّه لوجهة زرّها%s"
+          % (total, "" if not bad else " — فشل %d: %s" % (len(bad), bad[:3])))
+
+    # الوجهة المعادة يجب أن تكون وجهة زر حقيقية يعرفها معالج الأزرار.
+    targets = {e for e, _, _ in INTENT_CASES if e}
+    known = {"M", "B", "R", "I", "H"}
+    unknown = [x for x in targets
+               if x.split(":")[0] not in known]
+    check(not unknown, "كل الوجهات المعادة وجهات أزرار معروفة%s"
+          % ("" if not unknown else " — مجهولة: %s" % unknown))
+
+
+def voice_list_checks() -> None:
+    import voice
+    print(chr(10) + "--- فواصل القراءة الصوتية واختصار القوائم (SPEC 9) ---")
+    long_screen = conversation.build_items_screen("ar", "cold_salads", 0)
+    spoken = voice.speech_text(
+        long_screen["text"], "ar",
+        summary=voice.list_summary(long_screen["text"], "ar"))
+    check(len(spoken.split()) <= voice.MAX_VOICE_WORDS,
+          "القائمة الطويلة تُختصر إلى %d كلمة (الحد %d)"
+          % (len(spoken.split()), voice.MAX_VOICE_WORDS))
+    check("•" not in spoken, "ولا يبقى رمز بند يُقرأ صوتاً")
+
+    short = conversation.build_items_screen("ar", "soups", 0)
+    spoken2 = voice.speech_text(
+        short["text"], "ar", summary=voice.list_summary(short["text"], "ar"))
+    items = len(voice._list_lines(short["text"]))
+    stops = spoken2.count(".") + spoken2.count("،")
+    check(stops >= items,
+          "القائمة القصيرة: %d علامة وقف لـ%d عنصر" % (stops, items))
+    check("—" not in spoken2, "الشرطة الفاصلة صارت فاصلة تُوقف النطق")
+    check(voice._count_phrase(2, "ar") == "صنفين"
+          and voice._count_phrase(10, "ar").endswith("أصناف")
+          and voice._count_phrase(24, "ar").endswith("صنفاً"),
+          "تمييز العدد سليم نحوياً")
+
 
 
 if __name__ == "__main__":

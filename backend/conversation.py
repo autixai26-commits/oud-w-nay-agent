@@ -702,13 +702,14 @@ def handle_text(user: User, text: str, lang) -> None:
     # داخل تدفق حجز أو تعديل نشط، «بدي احجز يوم ثاني» تعني نقل هذا
     # الحجز لا بدء آخر من الصفر. لا نعيد التشغيل ونبقى في السياق.
     current = _state(user).get("state") or ""
-    intent = ai.detect_intent(stripped)
-    if current.startswith("bk_") and intent == "book":
-        return _ask_date(adapter, user, lang, _data(user))
-    if intent == "book":
-        return _ask_type(adapter, user, lang)
-    if intent == "manage":
-        return _screen_my_bookings(adapter, user, lang)
+    # النية تعود كوجهة زر، فنمرّرها لنفس معالج الأزرار: الكلام الحر
+    # والزر يسلكان المسار ذاته بالبناء لا بالتوافق.
+    target = ai.detect_intent(stripped)
+    if target:
+        if current.startswith("bk_") and target == "B":
+            # داخل تدفق نشط «بدي احجز يوم ثاني» نقلٌ لا بدءٌ من الصفر.
+            return _ask_date(adapter, user, lang, _data(user))
+        return handle_callback(user, target, lang)
 
     # سؤال حر: القواعد الثابتة تُفرض داخل ai.reply_to قبل النموذج.
     adapter.send_buttons(user, ai.reply_to(stripped, lang), [],

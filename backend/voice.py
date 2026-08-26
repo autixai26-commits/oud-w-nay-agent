@@ -116,14 +116,47 @@ def shorten(text: str) -> str:
     return " ".join(words[:MAX_VOICE_WORDS]).rstrip(",،.") + "…"
 
 
+def list_summary(text: str, lang: str = "ar") -> str:
+    """يبني جملة موجزة لقائمة طويلة: عنوانها وعدد عناصرها."""
+    items = _list_lines(text)
+    if len(items) <= MAX_SPOKEN_ITEMS:
+        return ""
+    title = ""
+    for line in (text or "").split(chr(10)):
+        stripped = line.strip()
+        if stripped and not _BULLET.match(line):
+            title = stripped
+            break
+    import texts as _texts
+    return _texts.t(lang, "voice_list_summary",
+                    count=_count_phrase(len(items), lang), title=title or "")
+
+
+def _count_phrase(n: int, lang: str) -> str:
+    """تمييز العدد بالعربية: «صنفين» و«عشرة أصناف» و«اثنا عشر صنفاً».
+
+    بدونها يخرج «عشرة صنف» وهي خطأ نحوي يسمعه الزبون.
+    """
+    if lang != "ar":
+        return "%d item%s" % (n, "" if n == 1 else "s")
+    if n == 1:
+        return "صنف واحد"
+    if n == 2:
+        return "صنفين"
+    if 3 <= n <= 10:
+        return "%s أصناف" % number_words_ar(n)
+    return "%s صنفاً" % number_words_ar(n)
+
+
 def synthesize(text: str, lang: str = "ar") -> bytes:
     """ElevenLabs TTS. يعيد mp3، أو b"" عند أي فشل أو تجاوز حصة."""
     if not available():
         return b""
-    # SPEC 9: الأرقام تُنطق بالكلمات، وبعض الكلمات تحتاج صورة نطق
-    # أردنية، وإلا خرج الرد مشوّشاً أو بلهجة غريبة.
+    # SPEC 9: القوائم تُفصل بترقيم صريح أو تُختصر، والأرقام تُنطق
+    # بالكلمات، وبعض الكلمات تحتاج صورة نطق أردنية.
+    spoken = speech_text(text, lang, summary=list_summary(text, lang))
     body = shorten(
-        add_tashkeel(fix_pronunciation(spoken_numbers(text, lang), lang), lang))
+        add_tashkeel(fix_pronunciation(spoken_numbers(spoken, lang), lang), lang))
     if not body:
         return b""
     try:
@@ -326,3 +359,41 @@ def add_tashkeel(text: str, lang: str = "ar") -> str:
         if bare in out:
             out = out.replace(bare, MENU_TASHKEEL[bare])
     return out
+
+
+# ------------------------------------ فواصل القراءة والقوائم (SPEC 9)
+# سطور القائمة تُقرأ ككتلة واحدة إن لم يفصلها ترقيم صريح: المسافة
+# وحدها لا تُحدث وقفة، فتلتحم الأصناف ويصعب تمييز أين ينتهي صنف.
+_BULLET = re.compile(r"^\s*[•\-\*]\s*", re.MULTILINE)
+
+# قائمة أطول من هذا لا تُقرأ أصلاً — تُختصر (SPEC 9، حد 40 كلمة).
+MAX_SPOKEN_ITEMS = 4
+
+
+def _list_lines(text: str) -> list:
+    return [ln for ln in (text or "").split("\n") if _BULLET.match(ln)]
+
+
+def speech_text(text: str, lang: str = "ar", summary: str = "") -> str:
+    """يحوّل نص الرسالة إلى نص صالح للنطق.
+
+    القوائم القصيرة: يُستبدل رمز البند بفاصل ترقيم صريح فيتوقف المحرّك
+    بين العناصر. القوائم الطويلة: تُستبدل بجملة موجزة، لأن قراءة أربعة
+    وعشرين صنفاً بالصوت لا تفيد الزبون والتفاصيل أمامه في النص.
+    """
+    body = text or ""
+    items = _list_lines(body)
+    if len(items) > MAX_SPOKEN_ITEMS and summary:
+        return summary
+
+    out = []
+    for line in body.split("\n"):
+        line = _BULLET.sub("", line).strip()
+        if not line:
+            continue
+        # كل سطر جملة مستقلة: ننهيه بنقطة إن خلا من علامة وقف.
+        if line[-1] not in ".!؟?،:":
+            line += "."
+        out.append(line)
+    # الشرطة الفاصلة داخل السطر («صنف — سعر») تُقرأ التحاماً، فنجعلها فاصلة.
+    return " ".join(out).replace(" — ", "، ").replace("—", "، ")
