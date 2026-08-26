@@ -18,6 +18,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import ai
+import booking
+import config
 import conversation
 import db
 import platform_adapter
@@ -166,6 +168,7 @@ def main() -> int:
 
     extra_checks()
     extra_checks_v2()
+    extra_checks_v3()
 
     # المسح يمر بتدفق الحجز فيكتب حالة للمستخدم الوهمي — ننظّفها.
     db.client().table("user_state").delete().eq("user_id", "verify").execute()
@@ -313,6 +316,80 @@ def extra_checks_v2() -> None:
     check(not any("نفاحتين" in n for n in names),
           "لا وجود لـ«نفاحتين» في قاعدة البيانات")
     check(any("تفاحتين" in n for n in names), "و«تفاحتين» موجودة")
+
+
+
+
+def extra_checks_v3() -> None:
+    """الجولة الثالثة: صيغ نية الحجوزات القائمة، وفلترة الأوقات."""
+    print("\n--- كل صيغ نية الحجوزات القائمة (عرض/تعديل/إلغاء) ---")
+    manage_forms = [
+        # عرض — الصيغة التي فشلت في الاختبار الحقيقي
+        "بدي اشوف الحجوزات تبعوني", "وين حجوزاتي", "شو حجزت",
+        "بدي اشوف حجزي", "حجوزاتي", "اعرض حجوزاتي", "كم حجز عندي",
+        "حجوزاتنا", "show my bookings", "where are my reservations",
+        "what did I book", "my booking",
+        # تعديل وإلغاء
+        "بدي اعدل", "بدي أعدّل حجزي", "بدي الغي", "الغاء",
+        "بدي أجّل موعدي", "بدل حجزي", "cancel my booking",
+        "change my reservation",
+    ]
+    bad = [f for f in manage_forms if ai.detect_intent(f) != "manage"]
+    check(not bad, "كل الـ%d صيغة تُكشف كـ manage%s"
+          % (len(manage_forms), "" if not bad else " — فشل: %s" % bad))
+
+    book_forms = ["بدي احجز", "بدي احجز طاولة", "أعطيني رابط جديد",
+                  "بدي طاولة لأربعة", "احجزلي طاولة", "بدي حجز",
+                  "I want to book a table"]
+    bad = [f for f in book_forms if ai.detect_intent(f) != "book"]
+    check(not bad, "وكل الـ%d صيغة حجز جديد تُكشف كـ book%s"
+          % (len(book_forms), "" if not bad else " — فشل: %s" % bad))
+
+    neutral = ["وين بتقعوا", "شو الدوام", "قديش سعر التبولة",
+               "في عندكم أرجيلة", "شو المنيو", "كيف الحال",
+               "وين المطعم", "في موقف سيارات"]
+    bad = [f for f in neutral if ai.detect_intent(f) is not None]
+    check(not bad, "والأسئلة العادية تبقى بلا نية%s"
+          % ("" if not bad else " — التُقطت خطأً: %s" % bad))
+
+    print("\n--- «بدي اشوف الحجوزات» تفتح حجوزاتي فعلياً ---")
+    u = User("telegram", "verify_view", "verify_view")
+    db.client().table("user_state").delete().eq(
+        "user_id", "verify_view").execute()
+    db.save_user_state("telegram", "verify_view", language="ar", state="main")
+    sent.clear()
+    conversation.handle_text(u, "بدي اشوف الحجوزات تبعوني", "ar")
+    blob = "\n".join(s["text"] for s in sent)
+    check(texts.t("ar", "unknown") not in blob, "لا تذهب لمسار «لا أعرف»")
+    check(texts.t("ar", "my_bookings_empty") in blob
+          or texts.t("ar", "my_bookings_title") in blob,
+          "بل تفتح شاشة حجوزاتي")
+    db.client().table("user_state").delete().eq(
+        "user_id", "verify_view").execute()
+
+    print("\n--- فلترة الأوقات حسب الساعة الحالية (SPEC 6.1.4) ---")
+    today = config.today_local()
+    now_hour = config.now_local().hour
+    hours_today = booking.available_hours(today)
+    check(all(h > now_hour for h in hours_today),
+          "لا ساعة ماضية أو حاضرة في خيارات اليوم (الآن %d، المعروض %s)"
+          % (now_hour, hours_today))
+
+    tomorrow = booking.next_days()[1]
+    all_hours = sorted(h for p in booking.PERIODS.values() for h in p)
+    check(booking.available_hours(tomorrow) == all_hours,
+          "واليوم التالي تُعرض ساعاته كاملة")
+
+    for period, hours in booking.PERIODS.items():
+        got = booking.available_hours(today, period)
+        check(all(h in hours for h in got) and all(h > now_hour for h in got),
+              "فترة %-8s اليوم: %s" % (period, got or "لا شيء"))
+
+    periods = booking.available_periods(today)
+    check(all(booking.available_hours(today, p) for p in periods),
+          "لا تُعرض فترة انقضت بالكامل")
+    check(all(booking.available_hours(d) for d in booking.bookable_days()),
+          "ولا يُعرض يوم لا يمكن الحجز فيه")
 
 
 if __name__ == "__main__":

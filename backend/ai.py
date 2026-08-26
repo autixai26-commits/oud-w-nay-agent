@@ -146,35 +146,51 @@ def reply_to(user_text: str, lang: str) -> str:
 
 
 # --------------------------------------------------- كشف النية (SPEC 8)
-# طلب الحجز أو التعديل ليس سؤالاً عن معلومة، فلا يُمرَّر للنموذج:
-# النموذج لا يملك أدوات فيرد «لا أعرف» ويعطي رقم الهاتف — وهذا خطأ.
-_BOOK_AR = {_n for _n in ("احجز", "أحجز", "احجزلي", "حجز", "رابط", "الرابط",
-                          "طاولة", "طاوله", "موعد")}
-_BOOK_EN = {"book", "booking", "reserve", "reservation", "link", "table"}
+# طلب الحجز أو الاطّلاع عليه أو تعديله ليس سؤالاً عن معلومة، فلا يُمرَّر
+# للنموذج: النموذج لا يملك أدوات فيرد «لا أعرف» أو ينكر أن هذا النظام
+# يدير الحجوزات — وكلاهما خطأ يراه الزبون تناقضاً مع زر «حجوزاتي».
 
-_MANAGE_AR = {"حجوزاتي", "حجزي", "الغي", "ألغي", "إلغاء", "الغاء", "الغاء",
-              "عدل", "عدّل", "أعدل", "اعدل", "تعديل", "غير", "أغير", "اغير",
-              "بدل", "أبدل", "ابدل", "حجوزات", "احجوزاتي"}
+# إشارة صريحة إلى حجز قائم يملكه الزبون. وجودها وحده يكفي.
+_MINE_AR = {"حجوزاتي", "حجزاتي", "حجزي", "موعدي", "طاولتي",
+            "حجوزاتنا", "حجزنا", "موعدنا", "تبعوني", "تبعي", "الي"}
+_MINE_EN = {"mine", "my"}
+
+# أسماء الحجز عامةً — تحتاج فعلاً معها لتتحدّد النية.
+_RES_AR = {"حجز", "الحجز", "حجوزات", "الحجوزات", "حجزت", "موعد", "المواعيد"}
+_RES_EN = {"booking", "bookings", "reservation", "reservations",
+           "appointment"}
+
+# أفعال الاطّلاع.
+_VIEW_AR = {"اشوف", "شوف", "أشوف", "شايف", "اعرض", "عرض", "اطلع", "أطلع",
+            "وين", "شو", "ايش", "كم", "عندي", "في"}
+_VIEW_EN = {"see", "show", "view", "list", "check", "where", "what", "have"}
+
+# أفعال التعديل والإلغاء.
+_MANAGE_AR = {"الغي", "ألغي", "إلغاء", "الغاء", "عدل", "عدّل", "أعدل",
+              "اعدل", "تعديل", "غير", "أغير", "اغير", "بدل", "أبدل",
+              "ابدل", "أجل", "اجل", "تأجيل", "تاجيل"}
 _MANAGE_EN = {"cancel", "modify", "change", "edit", "reschedule",
-              "bookings", "my"}
+              "postpone", "move"}
+
+# طلب حجز جديد.
+_BOOK_AR = {"احجز", "أحجز", "احجزلي", "رابط", "الرابط", "طاولة", "طاوله"}
+_BOOK_EN = {"book", "reserve", "table", "link"}
 
 # كلمات تدل على أن الجملة طلب لا استفسار.
 _WANT_AR = {"بدي", "بدنا", "ابغى", "أبغى", "ممكن", "اعطيني", "أعطيني",
-            "ابعتلي", "ابعث", "عطيني", "رجاء", "بحب", "احب"}
-_WANT_EN = {"want", "need", "give", "send", "please", "can", "could", "id"}
+            "ابعتلي", "ابعث", "عطيني", "رجاء", "بحب", "احب", "لو"}
+_WANT_EN = {"want", "need", "give", "send", "please", "can", "could",
+            "would", "like"}
 
 
 _HAMZA = str.maketrans("أإآىة", "اااية")
-# التشكيل والتطويل: يجب حذفها **قبل** التقطيع لا بعده، لأن الشدّة ليست
-# حرف كلمة فتقسم «أعدّل» إلى «أعد» و«ل» ويضيع الكشف.
+# التشكيل والتطويل يُحذفان **قبل** التقطيع لا بعده: الشدّة ليست حرف
+# كلمة فتقسم «أعدّل» إلى «أعد» و«ل» ويضيع الكشف.
 _DIACRITICS = re.compile(r"[ً-ْـٰ]")
 
 
 def _normalize(text: str) -> str:
-    """يوحّد صور الهمزة والألف المقصورة والتاء المربوطة ويحذف التشكيل.
-
-    الزبون يكتب «بدي اعدل» و«بدي أعدّل» و«بدي أعدل» — وكلها نية واحدة.
-    """
+    """يوحّد صور الهمزة والألف المقصورة والتاء المربوطة ويحذف التشكيل."""
     return _DIACRITICS.sub("", text or "").lower().translate(_HAMZA)
 
 
@@ -183,21 +199,56 @@ def _toks(text: str) -> set:
 
 
 # نطبّع المجموعات نفسها فلا نحتاج سرد كل صيغة همزة يدوياً.
-_BOOK_AR = {_normalize(w) for w in _BOOK_AR}
+_MINE_AR = {_normalize(w) for w in _MINE_AR}
+_RES_AR = {_normalize(w) for w in _RES_AR}
+_VIEW_AR = {_normalize(w) for w in _VIEW_AR}
 _MANAGE_AR = {_normalize(w) for w in _MANAGE_AR}
+_BOOK_AR = {_normalize(w) for w in _BOOK_AR}
 _WANT_AR = {_normalize(w) for w in _WANT_AR}
 
 
 def detect_intent(text: str) -> str | None:
     """يعيد 'manage' أو 'book' أو None.
 
-    الترتيب مقصود: «بدي أعدّل حجزي» فيها «حجز» و«أعدّل» معاً،
-    والتعديل هو النية الحقيقية.
+    'manage' يشمل الاطّلاع والتعديل والإلغاء — ثلاثتها تفتح شاشة
+    «حجوزاتي» نفسها (SPEC 6.5)، فلا داعي للتفريق بينها هنا.
     """
     t = _toks(text)
     if not t:
         return None
+
+    mine = bool(t & _MINE_AR) or bool(t & _MINE_EN)
+    res = bool(t & _RES_AR) or bool(t & _RES_EN)
+    view = bool(t & _VIEW_AR) or bool(t & _VIEW_EN)
+    manage = bool(t & _MANAGE_AR) or bool(t & _MANAGE_EN)
     wants = bool(t & _WANT_AR) or bool(t & _WANT_EN)
+    book = bool(t & _BOOK_AR) or bool(t & _BOOK_EN)
+
+    # إشارة صريحة لحجز يملكه الزبون: نية واضحة مهما كان الفعل.
+    if mine and (res or view or manage or wants or len(t) <= 2):
+        return "manage"
+    if mine and not book:
+        return "manage"
+    # فعل تعديل أو إلغاء. «بدي اعدل» و«بدي الغي» بلا ذكر الحجز نيّتهما
+    # واضحة في سياق بوت لا يفعل شيئاً آخر، فكلمة الطلب تكفي قرينةً.
+    if manage and (res or mine or book or wants or len(t) <= 2):
+        return "manage"
+    # الاطّلاع على حجوزات قائمة: «بدي اشوف الحجوزات»، «وين حجوزاتي».
+    if res and view:
+        return "manage"
+    # «what did I book» سؤال عمّا حُجز لا طلب حجز: فعل اطّلاع بلا طلب.
+    if book and view and not wants:
+        return "manage"
+    # طلب حجز جديد.
+    if book and wants:
+        return "book"
+    if t & {"احجز", "أحجز", "احجزلي", "book", "reserve"}:
+        return "book"
+    # «بدي حجز» بلا قرينة اطّلاع = حجز جديد.
+    if res and wants and not view:
+        return "book"
+    return None
+
 
     if (t & _MANAGE_AR) or (t & _MANAGE_EN and (t & _BOOK_EN or wants)):
         return "manage"

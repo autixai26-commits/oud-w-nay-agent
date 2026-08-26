@@ -246,26 +246,40 @@ def _ask_type(adapter, user, lang) -> None:
 
 def _ask_date(adapter, user, lang, data) -> None:
     _save(user, state="bk_date", data=data)
-    # SPEC 6.1.2 — اليوم وبكرا وخمسة بعدها = 7 أزرار، ضمن حد العشرة.
-    days = booking.next_days()
+    # SPEC 6.1.2 — اليوم وبكرا وخمسة بعدها. اليوم يسقط إن لم يبقَ فيه
+    # وقت قابل للحجز، فلا يُعرض تاريخ لا يمكن إتمام حجز فيه.
+    days = booking.bookable_days()
     adapter.send_buttons(
         user, texts.t(lang, "ask_date"),
         [(_date_label(d, lang), "B:d:%s" % d.isoformat()) for d in days],
         nav=_cancel_nav(lang))
 
 
+_PERIOD_KEYS = {"noon": "btn_noon", "evening": "btn_evening",
+                "late": "btn_late"}
+
+
 def _ask_period(adapter, user, lang, data) -> None:
     _save(user, state="bk_period", data=data)
-    adapter.send_buttons(user, texts.t(lang, "ask_period"), [
-        (texts.t(lang, "btn_noon"), "B:p:noon"),
-        (texts.t(lang, "btn_evening"), "B:p:evening"),
-        (texts.t(lang, "btn_late"), "B:p:late"),
-    ], nav=_cancel_nav(lang))
+    day = Date.fromisoformat(data["date"])
+    # لا نعرض فترة انقضت بالكامل اليوم.
+    periods = booking.available_periods(day)
+    if not periods:
+        return _ask_date(adapter, user, lang, data)
+    adapter.send_buttons(
+        user, texts.t(lang, "ask_period"),
+        [(texts.t(lang, _PERIOD_KEYS[p]), "B:p:%s" % p) for p in periods],
+        nav=_cancel_nav(lang))
+    return None
 
 
 def _ask_hour(adapter, user, lang, data, period) -> None:
     _save(user, state="bk_hour", data=data)
-    hours = booking.PERIODS.get(period, ())
+    day = Date.fromisoformat(data["date"])
+    # اليوم نفسه: تُستبعد كل ساعة مضت أو حانت الآن (SPEC 6.1.4).
+    hours = booking.available_hours(day, period)
+    if not hours:
+        return _ask_period(adapter, user, lang, data)
     adapter.send_buttons(
         user, texts.t(lang, "ask_hour"),
         [(_hour_label(h), "B:h:%d" % h) for h in hours],
@@ -499,6 +513,10 @@ def _handle_booking(adapter, user, lang, parts) -> None:
         except ValueError:
             return _ask_period(adapter, user, lang, data)
         if booking.period_of(hour) is None:
+            return _ask_period(adapter, user, lang, data)
+        # ضغطة على زر قديم بعد فوات الوقت: نرفضها ونعيد العرض المحدَّث.
+        if hour not in booking.available_hours(
+                Date.fromisoformat(data["date"])):
             return _ask_period(adapter, user, lang, data)
         data["hour"] = hour
         # في التعديل: العدد موروث من الحجز الأصلي، فنمضي مباشرة.

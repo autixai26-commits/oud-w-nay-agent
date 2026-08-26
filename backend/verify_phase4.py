@@ -213,6 +213,11 @@ def main() -> int:
     # -------------------------------- 5) تذكير الزبون قبل الموعد
     print("\n5) تذكير الزبون قبل الموعد بـ30 دقيقة (SPEC 6.4)")
     to_customer.clear()
+    # نعيد ضبط الموعد الآن بدل الاعتماد على ما تبقّى منه: الأقسام
+    # السابقة تستهلك وقتاً يتغيّر مع كل فحص يُضاف، فيخرج الاختبار من
+    # نافذة التذكير ويسقط بلا خطأ في الكود.
+    target_utc = config.now_utc() + config.minutes(40)
+    db.update_reservation(res["id"], reservation_at=target_utc.isoformat())
     # نافذة التذكير [الموعد − 30، الموعد) — ندخلها من بدايتها.
     wait_until(target_utc - config.minutes(config.REMINDER_BEFORE_MIN)
                + config.minutes(2), "دخول نافذة التذكير")

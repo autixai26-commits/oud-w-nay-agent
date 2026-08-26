@@ -243,3 +243,29 @@ def large_group_request(*, platform: str, user_id: str, party_size: int,
         "is_large_group": True, "group_type": group_type, "occasion": occasion,
     }
     return db.client().table("reservations").insert(row).execute().data[0]
+
+
+# --------------------------------------------- الأوقات المتاحة فعلياً
+def available_hours(day: Date, period: str | None = None) -> list:
+    """الساعات القابلة للحجز في يوم معيّن.
+
+    لليوم نفسه نستبعد كل ساعة مضت أو حانت الآن — عرض «1:00» والساعة
+    3:55 عصراً يجعل الزبون يختار موعداً فات. المقارنة بالتوقيت المحلي
+    حصراً (CONSTRAINTS القيد ١).
+    """
+    hours = PERIODS.get(period, ()) if period else tuple(
+        h for p in PERIODS.values() for h in p)
+    if day != config.today_local():
+        return sorted(hours)
+    now = config.now_local()
+    return sorted(h for h in hours if h > now.hour)
+
+
+def available_periods(day: Date) -> list:
+    """الفترات التي بقي فيها وقت قابل للحجز، بترتيب اليوم."""
+    return [name for name in PERIODS if available_hours(day, name)]
+
+
+def bookable_days(count: int = BOOKING_DAYS_AHEAD) -> list:
+    """التواريخ المعروضة، مع إسقاط اليوم إن لم يبقَ فيه وقت."""
+    return [d for d in next_days(count) if available_hours(d)]

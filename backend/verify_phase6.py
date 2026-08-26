@@ -137,9 +137,17 @@ def main_run() -> int:
     check(row["phone"] == "0790000001" and row["name"] == "اختبار أ",
           "الاسم والهاتف صحيحان")
 
-    # الملغى لا يُحسب في الإشغال (SPEC 5.6 — الحالات الشاغلة فقط)
-    check(data["stats"]["count"] == 1,
-          "الإحصاء يعدّ الحالات الشاغلة فقط (%d)" % data["stats"]["count"])
+    # الملغى لا يُحسب في الإشغال (SPEC 5.6 — الحالات الشاغلة فقط).
+    # نعدّ صفوف هذا الاختبار وحدها: القاعدة حيّة وقد يكون فيها حجوزات
+    # حقيقية اليوم، فالرقم المطلق يجعل الفحص يسقط بلا خطأ في الكود.
+    mine_rows = [r for r in data["rows"] if r["code"] in ("V6A001", "V6B002")]
+    occupying = [r for r in mine_rows
+                 if r["status"] in config.OCCUPYING_STATUSES]
+    check(len(occupying) == 1,
+          "الإحصاء يعدّ الحالات الشاغلة فقط (%d من صفَّي الاختبار)"
+          % len(occupying))
+    check(data["stats"]["count"] >= 1,
+          "وإجمالي الإشغال لا يقل عنها (%d)" % data["stats"]["count"])
     check(data["stats"]["total"] == 26, "إجمالي الطاولات 26")
 
     filtered = client.get(
