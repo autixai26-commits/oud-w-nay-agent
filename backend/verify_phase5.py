@@ -156,6 +156,13 @@ def main() -> int:
 
     extra_checks()
     extra_checks_v2()
+    extra_checks_v3()
+
+    # المحوّل يحفظ خريطة الأزرار في حالة المستخدم، فيخلّف أثراً
+    # للمستخدمين الوهميين. ننظّفه حتى لا يلوّث قاعدة الإنتاج.
+    import db as _db
+    for _u in ("t1", "t2", "t3"):
+        _db.client().table("user_state").delete().eq("user_id", _u).execute()
 
     print("\n" + "=" * 62)
     print("النتيجة: %s" % ("نجح كل الفحوصات" if ok else "في فحوصات فاشلة"))
@@ -214,9 +221,10 @@ def extra_checks_v2() -> None:
     """الجولة الثانية: تصحيح نطق «أرجيلة» بالقاف الأردنية."""
     print("\n10) تصحيح النطق للهجة الأردنية (SPEC 9)")
     out = voice.fix_pronunciation("عندنا أرجيلة بنكهات متعددة", "ar")
-    check("أرقيلة" in out and "أرجيلة" not in out,
-          "«أرجيلة» ← «أرقيلة» بالقاف — %s" % out)
-    check(voice.fix_pronunciation("الأرجيلة حلوة", "ar").find("الأرقيلة") >= 0,
+    check(voice.SHISHA_SPOKEN in out and "أرجيلة" not in out,
+          "«أرجيلة» ← «%s» — %s" % (voice.SHISHA_SPOKEN, out))
+    check(voice.fix_pronunciation("الأرجيلة حلوة", "ar")
+          == "ال%s حلوة" % voice.SHISHA_SPOKEN,
           "الصيغة المعرَّفة تُصحَّح أيضاً")
     check(voice.fix_pronunciation("shisha is nice", "en") == "shisha is nice",
           "الإنجليزية لا تُمسّ")
@@ -234,8 +242,73 @@ def extra_checks_v2() -> None:
     finally:
         voice.shorten = real
     body = seen.get("text", "")
-    check("أرقيلة" in body, "التصحيح يمر فعلياً قبل محرّك الصوت")
+    check(voice.SHISHA_SPOKEN in body, "التصحيح يمر فعلياً قبل محرّك الصوت")
     check("ثمانية" in body, "ومعه تحويل الأرقام في نفس المسار")
+
+
+
+
+def extra_checks_v3() -> None:
+    """الجولة الثالثة: تشكيل أسماء المنيو الملتبسة، ونطق الأرجيلة."""
+    print("\n11) تشكيل أسماء المنيو الملتبسة (SPEC 9)")
+    # «مشكلة» بلا تشكيل تُقرأ problem لا «متنوّعة» — أخطر التباس.
+    out = voice.add_tashkeel("مشاوي مشكلة", "ar")
+    check(out == "مَشاوي مُشَكَّلة", "«مشاوي مشكلة» ← %s" % out)
+    check(voice.add_tashkeel("فواكه مشكلة", "ar").endswith("مُشَكَّلة"),
+          "«فواكه مشكلة» تُشكَّل أيضاً")
+    check(voice.add_tashkeel("خضار مشكل", "ar") == "خُضار مُشَكَّل",
+          "المذكّر «مشكل» يُشكَّل ولا تبتلعه «مشكلة»")
+    check(voice.add_tashkeel("سلطة فتوش", "ar").startswith("سَلَطة"),
+          "«سلطة» الطعام لا «سُلْطة» الحكم")
+    check(voice.add_tashkeel("حمص بيروتي", "ar").startswith("حُمُّص"),
+          "«حمص» الحبّ لا «حِمْص» المدينة")
+    check(voice.add_tashkeel("كبة نية", "ar").startswith("كُبَّة"), "«كبة»")
+    check(voice.add_tashkeel("جوانح مقلية", "ar") == "جْوانِح مَقْلية",
+          "«مقلية» لا تبتلعها «مقلي»")
+    check(voice.add_tashkeel("Mixed grill", "en") == "Mixed grill",
+          "الإنجليزية لا تُمسّ")
+
+    print("\n12) تغطية المنيو: كل اسم يمر بالتشكيل بلا كسر")
+    import db as _db
+    names = [m["name_ar"] for m in _db.all_menu_items()]
+    broken = [n for n in names if not voice.add_tashkeel(n, "ar")]
+    check(not broken, "كل الـ%d صنف تمر سليمة" % len(names))
+    touched = [n for n in names if voice.add_tashkeel(n, "ar") != n]
+    check(len(touched) >= 40,
+          "التشكيل يطال %d من %d صنف" % (len(touched), len(names)))
+
+    print("\n13) نطق الأرجيلة")
+    check(voice.SHISHA_SPOKEN != "أرجيلة",
+          "الصيغة المنطوقة تختلف عن المكتوبة (%s)" % voice.SHISHA_SPOKEN)
+    check(voice.fix_pronunciation("الأرجيلة حلوة", "ar")
+          == "ال%s حلوة" % voice.SHISHA_SPOKEN,
+          "الصيغة المعرَّفة تُعالَج ولا تبتلعها المجرّدة")
+    for m in _db.all_menu_items():
+        if "أرجيلة" in m["name_ar"]:
+            spoken = voice.fix_pronunciation(m["name_ar"], "ar")
+            check("أرجيلة" not in spoken,
+                  "«%s» ← %s" % (m["name_ar"], spoken))
+            break
+
+    print("\n14) ترتيب المعالجة: أرقام ثم نطق ثم تشكيل")
+    seen = {}
+    real = voice.shorten
+
+    def spy(text):
+        seen["text"] = text
+        return real(text)
+
+    voice.shorten = spy
+    try:
+        voice.synthesize("مشاوي مشكلة بـ 8.750 د.أ مع أرجيلة", "ar")
+    finally:
+        voice.shorten = real
+    body = seen.get("text", "")
+    check("مُشَكَّلة" in body, "التشكيل مطبَّق")
+    check(voice.SHISHA_SPOKEN in body, "تصحيح النطق مطبَّق")
+    check("ثمانية" in body, "تحويل الأرقام مطبَّق")
+    check("8.750" not in body and "أرجيلة" not in body,
+          "ولا بقايا من الصور الأصلية")
 
 
 if __name__ == "__main__":
