@@ -155,6 +155,7 @@ def main() -> int:
               % lang)
 
     extra_checks()
+    extra_checks_v2()
 
     print("\n" + "=" * 62)
     print("النتيجة: %s" % ("نجح كل الفحوصات" if ok else "في فحوصات فاشلة"))
@@ -205,6 +206,36 @@ def extra_checks() -> None:
         voice.shorten = real
     check("ثلاثة" in seen.get("text", ""),
           "النص الواصل للتوليد منطوق لا رقمي")
+
+
+
+
+def extra_checks_v2() -> None:
+    """الجولة الثانية: تصحيح نطق «أرجيلة» بالقاف الأردنية."""
+    print("\n10) تصحيح النطق للهجة الأردنية (SPEC 9)")
+    out = voice.fix_pronunciation("عندنا أرجيلة بنكهات متعددة", "ar")
+    check("أرقيلة" in out and "أرجيلة" not in out,
+          "«أرجيلة» ← «أرقيلة» بالقاف — %s" % out)
+    check(voice.fix_pronunciation("الأرجيلة حلوة", "ar").find("الأرقيلة") >= 0,
+          "الصيغة المعرَّفة تُصحَّح أيضاً")
+    check(voice.fix_pronunciation("shisha is nice", "en") == "shisha is nice",
+          "الإنجليزية لا تُمسّ")
+
+    seen = {}
+    real = voice.shorten
+
+    def spy(text):
+        seen["text"] = text
+        return real(text)
+
+    voice.shorten = spy
+    try:
+        voice.synthesize("عندنا أرجيلة بـ 8.000 د.أ", "ar")
+    finally:
+        voice.shorten = real
+    body = seen.get("text", "")
+    check("أرقيلة" in body, "التصحيح يمر فعلياً قبل محرّك الصوت")
+    check("ثمانية" in body, "ومعه تحويل الأرقام في نفس المسار")
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@
       doneTitle: "تم اختيار طاولتك",
       doneBody: "رجاءً ارجع للبوت — بانتظار تثبيت الحجز.",
       doneCode: "رمز الحجز: ",
+      backToBot: "↩️ الرجوع لتليجرام",
       errTaken: "للأسف حجزها حدا قبلك بثواني. اختر طاولة ثانية.",
       errGeneric: "صار خلل، جرّب كمان مرة.",
       invalid: {
@@ -57,6 +58,7 @@
       doneTitle: "Your table is selected",
       doneBody: "Please return to the bot — waiting for confirmation.",
       doneCode: "Booking code: ",
+      backToBot: "↩️ Back to Telegram",
       errTaken: "Sorry, someone booked it seconds ago. Please pick another table.",
       errGeneric: "Something went wrong, please try again.",
       invalid: {
@@ -267,7 +269,26 @@
     $("done-title").textContent = t().doneTitle;
     $("done-body").textContent = t().doneBody;
     $("done-code").textContent = t().doneCode + code;
+
+    var bot = (window.OUD_CONFIG && window.OUD_CONFIG.botUsername) || "";
+    var back = $("tg-back");
+    back.textContent = t().backToBot;
+    // tg:// يفتح التطبيق مباشرة؛ https احتياطي لمن لا يملكه مثبّتاً.
+    back.href = bot ? ("tg://resolve?domain=" + bot) : "#";
+    back.onclick = function (e) {
+      if (!bot) { e.preventDefault(); return; }
+      setTimeout(function () { location.href = "https://t.me/" + bot; }, 700);
+    };
+
     hide("modal"); hide("picker"); show("done");
+
+    // محاولة فتح تلقائي بعد ثانية ونصف. المتصفحات لا تضمنها — خاصةً
+    // iOS — ولذلك يبقى الزر أعلاه ظاهراً دائماً كخيار يدوي.
+    if (bot) {
+      setTimeout(function () {
+        try { location.href = "tg://resolve?domain=" + bot; } catch (e) {}
+      }, 1500);
+    }
   }
 
   load();

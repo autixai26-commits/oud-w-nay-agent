@@ -10,6 +10,7 @@ OpenRouter يوفّر واجهة متوافقة مع OpenAI، فالفرق هو 
 """
 import functools
 import logging
+import re
 
 import httpx
 
@@ -147,23 +148,44 @@ def reply_to(user_text: str, lang: str) -> str:
 # --------------------------------------------------- كشف النية (SPEC 8)
 # طلب الحجز أو التعديل ليس سؤالاً عن معلومة، فلا يُمرَّر للنموذج:
 # النموذج لا يملك أدوات فيرد «لا أعرف» ويعطي رقم الهاتف — وهذا خطأ.
-_BOOK_AR = {"احجز", "أحجز", "احجزلي", "حجز", "رابط", "الرابط", "طاولة",
-            "طاوله", "بدي_احجز"}
+_BOOK_AR = {_n for _n in ("احجز", "أحجز", "احجزلي", "حجز", "رابط", "الرابط",
+                          "طاولة", "طاوله", "موعد")}
 _BOOK_EN = {"book", "booking", "reserve", "reservation", "link", "table"}
 
-_MANAGE_AR = {"حجوزاتي", "حجزي", "الغي", "ألغي", "إلغاء", "الغاء",
-              "عدل", "عدّل", "أعدل", "تعديل", "غيّر", "غير", "أغير"}
+_MANAGE_AR = {"حجوزاتي", "حجزي", "الغي", "ألغي", "إلغاء", "الغاء", "الغاء",
+              "عدل", "عدّل", "أعدل", "اعدل", "تعديل", "غير", "أغير", "اغير",
+              "بدل", "أبدل", "ابدل", "حجوزات", "احجوزاتي"}
 _MANAGE_EN = {"cancel", "modify", "change", "edit", "reschedule",
               "bookings", "my"}
 
 # كلمات تدل على أن الجملة طلب لا استفسار.
 _WANT_AR = {"بدي", "بدنا", "ابغى", "أبغى", "ممكن", "اعطيني", "أعطيني",
-            "ابعتلي", "ابعث", "عطيني", "رجاء", "لو_سمحت"}
+            "ابعتلي", "ابعث", "عطيني", "رجاء", "بحب", "احب"}
 _WANT_EN = {"want", "need", "give", "send", "please", "can", "could", "id"}
 
 
+_HAMZA = str.maketrans("أإآىة", "اااية")
+# التشكيل والتطويل: يجب حذفها **قبل** التقطيع لا بعده، لأن الشدّة ليست
+# حرف كلمة فتقسم «أعدّل» إلى «أعد» و«ل» ويضيع الكشف.
+_DIACRITICS = re.compile(r"[ً-ْـٰ]")
+
+
+def _normalize(text: str) -> str:
+    """يوحّد صور الهمزة والألف المقصورة والتاء المربوطة ويحذف التشكيل.
+
+    الزبون يكتب «بدي اعدل» و«بدي أعدّل» و«بدي أعدل» — وكلها نية واحدة.
+    """
+    return _DIACRITICS.sub("", text or "").lower().translate(_HAMZA)
+
+
 def _toks(text: str) -> set:
-    return {w.lower() for w in tokens(text)}
+    return set(tokens(_normalize(text)))
+
+
+# نطبّع المجموعات نفسها فلا نحتاج سرد كل صيغة همزة يدوياً.
+_BOOK_AR = {_normalize(w) for w in _BOOK_AR}
+_MANAGE_AR = {_normalize(w) for w in _MANAGE_AR}
+_WANT_AR = {_normalize(w) for w in _WANT_AR}
 
 
 def detect_intent(text: str) -> str | None:

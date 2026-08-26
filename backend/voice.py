@@ -120,8 +120,9 @@ def synthesize(text: str, lang: str = "ar") -> bytes:
     """ElevenLabs TTS. يعيد mp3، أو b"" عند أي فشل أو تجاوز حصة."""
     if not available():
         return b""
-    # SPEC 9: الأرقام تُنطق بالكلمات، وإلا خرجت مشوّشة.
-    body = shorten(spoken_numbers(text, lang))
+    # SPEC 9: الأرقام تُنطق بالكلمات، وبعض الكلمات تحتاج صورة نطق
+    # أردنية، وإلا خرج الرد مشوّشاً أو بلهجة غريبة.
+    body = shorten(fix_pronunciation(spoken_numbers(text, lang), lang))
     if not body:
         return b""
     try:
@@ -231,4 +232,26 @@ def spoken_numbers(text: str, lang: str = "ar") -> str:
     # والتطويل لا تمنع التحويل ("لـ4" تُنطق)، بينما "21ME29" يبقى رمزاً.
     out = re.sub(r"(?<![0-9A-Za-z])\d{1,4}(?![0-9A-Za-z])",
                  lambda m: number_words_ar(m.group(0)), out)
+    return out
+
+
+# ------------------------------------------- تصحيح النطق (SPEC 9)
+# محرّك الصوت يقرأ بعض الكلمات بلهجة غير أردنية. نكتب له الصورة التي
+# تُنطق صحيحاً بالأردنية، فيبقى النص المعروض للزبون كما هو.
+PRONUNCIATION_AR = {
+    # الجيم القاهرية في «أرجيلة» غريبة عن اللهجة — القاف الأردنية أصح.
+    "أرجيلة": "أرقيلة",
+    "ارجيلة": "ارقيلة",
+    "الأرجيلة": "الأرقيلة",
+    "الارجيلة": "الارقيلة",
+    "أرجيله": "أرقيلة",
+}
+
+
+def fix_pronunciation(text: str, lang: str = "ar") -> str:
+    if lang != "ar" or not text:
+        return text or ""
+    out = text
+    for wrong, right in PRONUNCIATION_AR.items():
+        out = out.replace(wrong, right)
     return out

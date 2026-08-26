@@ -199,6 +199,21 @@ def main_run() -> int:
         src = (WEB / name).read_text(encoding="utf-8")
         check(password not in src, "%-16s خالٍ من كلمة السر" % name)
 
+    # -------------------------- 7) الرجوع لتليجرام بعد الحجز
+    print("\n7) إعادة الزبون لتليجرام بعد اختيار الطاولة")
+    app_js = (WEB / "app.js").read_text(encoding="utf-8")
+    cfg_js = (WEB / "config.js").read_text(encoding="utf-8")
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    check("botUsername" in cfg_js and "Oudwnay_bot" in cfg_js,
+          "يوزرنيم البوت مضبوط في config.js")
+    check('id="tg-back"' in html, "زر الرجوع موجود في الصفحة")
+    check("tg://resolve?domain=" in app_js, "يفتح التطبيق عبر tg://")
+    check("https://t.me/" in app_js, "ومعه بديل https لمن لا يملك التطبيق")
+    check(app_js.count("backToBot") >= 3,
+          "نص الزر معرّف بالعربية والإنجليزية ومستعمَل")
+    check("setTimeout" in app_js.split("function done(")[1][:1000],
+          "محاولة فتح تلقائي بعد مهلة قصيرة")
+
     cleanup()
     print("\n" + "=" * 62)
     print("النتيجة: %s" % ("نجح كل الفحوصات" if ok else "في فحوصات فاشلة"))

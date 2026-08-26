@@ -139,7 +139,6 @@ def _screen_main(adapter, user, lang, greeting=False) -> None:
         (texts.t(lang, "btn_book"), "B"),
         (texts.t(lang, "btn_my_bookings"), "R"),
         (texts.t(lang, "btn_info"), "I"),
-        (texts.t(lang, "btn_switch_lang"), "X"),
     ])
 
 
@@ -385,8 +384,17 @@ def _cancel_reservation(adapter, user, lang, res_id, then_rebook=False) -> None:
     admin.notify_customer_cancelled(fresh)
 
     if then_rebook:
+        # SPEC 6.5 — التعديل ينقل الحجز نفسه: يرث نوعه وعدد أشخاصه فلا
+        # يُسأل الزبون عمّا حدّده أصلاً، ويبقى سياق التعديل قائماً حتى
+        # ينتهي أو يُلغى، فلا تُفهم رسالة تالية كحجز جديد منفصل.
         adapter.send_text(user, texts.t(lang, "edit_intro"))
-        return _ask_type(adapter, user, lang)
+        return _ask_date(adapter, user, lang, {
+            "type": res["booking_type"],
+            "party": res["party_size"],
+            "name": res["customer_name"],
+            "phone": res["customer_phone"],
+            "editing": res["code"],
+        })
     adapter.send_buttons(user, texts.t(lang, "res_cancelled",
                                        code=res["code"]), [],
                          nav=[(texts.t(lang, "btn_book"), "B"),
@@ -493,6 +501,11 @@ def _handle_booking(adapter, user, lang, parts) -> None:
         if booking.period_of(hour) is None:
             return _ask_period(adapter, user, lang, data)
         data["hour"] = hour
+        # في التعديل: العدد موروث من الحجز الأصلي، فنمضي مباشرة.
+        if data.get("editing") and data.get("party"):
+            if data.get("name") and data.get("phone"):
+                return _finish_booking(adapter, user, lang, data)
+            return _ask_name(adapter, user, lang, data)
         return _ask_party(adapter, user, lang, data)
 
     if kind == "n" and len(parts) > 2:        # عدد الأشخاص
@@ -509,6 +522,8 @@ def _handle_booking(adapter, user, lang, parts) -> None:
                                  nav=_cancel_nav(lang))
             return None
         data["party"] = size
+        if data.get("editing") and data.get("name") and data.get("phone"):
+            return _finish_booking(adapter, user, lang, data)
         return _ask_name(adapter, user, lang, data)
 
     if kind == "g" and len(parts) > 2:        # نوع المجموعة الكبيرة
@@ -636,8 +651,15 @@ def handle_text(user: User, text: str, lang) -> None:
 
     # SPEC 8: شاشة اختيار اللغة أُلغيت. نكتشف اللغة من أول رسالة
     # ونبدأ بها مباشرةً، ويبقى زر التبديل في القائمة الرئيسية.
+    # SPEC 8: لا زر ولا شاشة. اللغة تُكتشف من كل رسالة، وتتحوّل تلقائياً
+    # متى كتب الزبون بلغة أخرى فعلاً. الرسائل القصيرة جداً لا تُبدّلها
+    # حتى لا تقلبها كلمة إنجليزية عابرة داخل محادثة عربية.
+    detected = texts.detect_language(stripped)
     if not lang:
-        lang = texts.detect_language(stripped)
+        lang = detected
+        db.save_user_state(user.platform, user.user_id, language=lang)
+    elif detected != lang and len(stripped.split()) >= 2:
+        lang = detected
         db.save_user_state(user.platform, user.user_id, language=lang)
         if stripped in ("/start", "start", ""):
             _screen_main(adapter, user, lang, greeting=True)
@@ -659,7 +681,12 @@ def handle_text(user: User, text: str, lang) -> None:
 
     # SPEC 8: طلب الحجز أو التعديل نيّة لا سؤال — يبدأ التدفق المقابل
     # ولا يُمرَّر للنموذج، فالنموذج بلا أدوات يرد «لا أعرف» ويعطي الهاتف.
+    # داخل تدفق حجز أو تعديل نشط، «بدي احجز يوم ثاني» تعني نقل هذا
+    # الحجز لا بدء آخر من الصفر. لا نعيد التشغيل ونبقى في السياق.
+    current = _state(user).get("state") or ""
     intent = ai.detect_intent(stripped)
+    if current.startswith("bk_") and intent == "book":
+        return _ask_date(adapter, user, lang, _data(user))
     if intent == "book":
         return _ask_type(adapter, user, lang)
     if intent == "manage":

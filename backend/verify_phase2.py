@@ -165,6 +165,7 @@ def main() -> int:
             print("    %-14s %3d صنف -> %d صفحة" % (sub["slug"], n, pages))
 
     extra_checks()
+    extra_checks_v2()
 
     # المسح يمر بتدفق الحجز فيكتب حالة للمستخدم الوهمي — ننظّفها.
     db.client().table("user_state").delete().eq("user_id", "verify").execute()
@@ -228,6 +229,90 @@ def extra_checks() -> None:
 
     db.client().table("user_state").delete().eq(
         "user_id", "verify_lang").execute()
+
+
+
+
+def extra_checks_v2() -> None:
+    """حالات ولّدتها الجولة الثانية من الاختبار الحقيقي."""
+    print("\n--- لا زر لغة إطلاقاً (SPEC 8 المحدّث) ---")
+    user = User("telegram", "verify_nolang", "verify_nolang")
+    db.client().table("user_state").delete().eq(
+        "user_id", "verify_nolang").execute()
+    sent.clear()
+    conversation.handle_text(user, "مرحبا كيف الحال", None)
+    labels = [b[0] for s in sent for b in s["buttons"] + s["nav"]]
+    check(texts.AR["btn_switch_lang"] not in labels
+          and texts.EN["btn_switch_lang"] not in labels,
+          "زر تبديل اللغة غير موجود في أي قائمة")
+    actions = [b[1] for s in sent for b in s["buttons"] + s["nav"]]
+    check("X" not in actions, "ولا إجراء تبديل لغة معروض")
+
+    print("\n--- تحوّل اللغة تلقائياً عند تغيّرها ---")
+    check(db.get_language("telegram", "verify_nolang") == "ar",
+          "بدأت بالعربية من أول رسالة")
+    sent.clear()
+    conversation.handle_text(user, "Do you have a table for four?", "ar")
+    check(db.get_language("telegram", "verify_nolang") == "en",
+          "تحوّلت للإنجليزية تلقائياً بلا زر")
+    sent.clear()
+    conversation.handle_text(user, "شو الدوام عندكم", "en")
+    check(db.get_language("telegram", "verify_nolang") == "ar",
+          "ورجعت للعربية تلقائياً")
+    db.client().table("user_state").delete().eq(
+        "user_id", "verify_nolang").execute()
+
+    print("\n--- كشف النية من النص المكتوب (صيغ الهمزة والشدّة) ---")
+    forms = ["بدي اعدل", "بدي أعدّل", "بدي أعدل حجزي", "بدي الغي",
+             "بدي إلغاء", "بدّل حجزي", "بدي أغيّر موعدي"]
+    bad = [f for f in forms if ai.detect_intent(f) != "manage"]
+    check(not bad, "كل صيغ «تعديل/إلغاء» المكتوبة تُكشف%s"
+          % ("" if not bad else " — فشل: %s" % bad))
+
+    u2 = User("telegram", "verify_intent", "verify_intent")
+    db.client().table("user_state").delete().eq(
+        "user_id", "verify_intent").execute()
+    db.save_user_state("telegram", "verify_intent", language="ar",
+                       state="main")
+    sent.clear()
+    conversation.handle_text(u2, "بدي اعدل", "ar")
+    blob = "\n".join(s["text"] for s in sent)
+    check(texts.t("ar", "unknown") not in blob,
+          "«بدي اعدل» المكتوبة لا تذهب لمسار «لا أعرف»")
+    check(texts.t("ar", "my_bookings_empty") in blob
+          or texts.t("ar", "my_bookings_title") in blob,
+          "بل تفتح شاشة حجوزاتي مباشرة")
+    db.client().table("user_state").delete().eq(
+        "user_id", "verify_intent").execute()
+
+    print("\n--- سياق التعديل لا يُستبدل بحجز جديد ---")
+    u3 = User("telegram", "verify_edit", "verify_edit")
+    db.client().table("user_state").delete().eq(
+        "user_id", "verify_edit").execute()
+    db.save_user_state("telegram", "verify_edit", language="ar",
+                       state="bk_date",
+                       data={"type": "singles", "party": 4,
+                             "editing": "ABC123"})
+    sent.clear()
+    conversation.handle_text(u3, "بدي احجز يوم ثاني", "ar")
+    blob = "\n".join(s["text"] for s in sent)
+    check(texts.t("ar", "ask_booking_type") not in blob,
+          "داخل تدفق نشط لا يُعاد سؤال نوع الحجز")
+    check(texts.t("ar", "ask_date") in blob,
+          "بل يُعرض اختيار اليوم مباشرة — نقلٌ لا حجز جديد")
+    db.client().table("user_state").delete().eq(
+        "user_id", "verify_edit").execute()
+
+    print("\n--- صياغة طلب الهاتف ---")
+    for lang in ("ar", "en"):
+        msg = texts.t(lang, "ask_phone")
+        check("🙏" in msg, "%s: الصياغة مهذّبة — %s" % (lang, msg))
+
+    print("\n--- تصحيح المنيو: تفاحتين ---")
+    names = [m["name_ar"] for m in db.all_menu_items()]
+    check(not any("نفاحتين" in n for n in names),
+          "لا وجود لـ«نفاحتين» في قاعدة البيانات")
+    check(any("تفاحتين" in n for n in names), "و«تفاحتين» موجودة")
 
 
 if __name__ == "__main__":

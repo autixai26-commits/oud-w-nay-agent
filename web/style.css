@@ -160,3 +160,9 @@ button.d-available:active { transform: translate(-50%, -50%) scale(.9); }
   .sheet { border-radius: 16px; }
   .stage { margin: 4px auto 0; max-width: 900px; }
 }
+
+.tg-back {
+  display: inline-block; margin-top: 22px;
+  padding: 13px 26px; border-radius: 10px;
+  font-size: 15px; font-weight: 700; text-decoration: none;
+}
