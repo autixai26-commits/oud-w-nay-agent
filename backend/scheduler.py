@@ -7,6 +7,10 @@
 
 كل المدد تمر بـ config.minutes() (القيد ٢)، فيكفي ضبط TEST_TIME_SCALE
 لتشغيل السيناريو كاملاً بالثواني بدل الدقائق.
+
+كل إجراء يُحجز في القاعدة قبل تنفيذه لا بعده. المقايضة مقصودة: لو فشل
+الإرسال بعد الحجز ضاعت الرسالة، ولو حُجز بعد الإرسال وصلت مرتين. تكرار
+تذكير على الزبون أسوأ من سقوطه، وسقوطه يظهر في اللوق.
 """
 import logging
 
@@ -54,13 +58,15 @@ def tick() -> dict:
                     and not res.get("is_large_group")
                     and _due(res["created_at"],
                              config.minutes(config.ADMIN_SECOND_ALERT_MIN))):
+                # يُحجز أولاً ثم يُرسَل: من خسر الحجز لا يرسل شيئاً.
+                if not db.claim_reservation(res["id"], "admin_alert2_at",
+                                            now.isoformat()):
+                    continue
                 admin.alert_no_reply(res)
                 lang = res.get("language") or "ar"
                 get_adapter(res["platform"]).send_text(
                     User(res["platform"], res["user_id"], res["user_id"]),
                     texts.t(lang, "customer_no_answer_yet"))
-                db.update_reservation(res["id"],
-                                      admin_alert2_at=now.isoformat())
                 done["alert2"] += 1
                 continue
 
@@ -70,7 +76,8 @@ def tick() -> dict:
             # -------- الإلغاء التلقائي بعد الموعد بـ30 دقيقة (SPEC 6.4)
             if _due(res["reservation_at"],
                     config.minutes(config.AUTO_CANCEL_AFTER_MIN)):
-                db.update_reservation(res["id"], status="no_show")
+                if not db.claim_status(res["id"], "confirmed", "no_show"):
+                    continue
                 fresh = db.get_reservation(res["id"]) or res
                 lang = res.get("language") or "ar"
                 get_adapter(res["platform"]).send_text(
@@ -84,9 +91,10 @@ def tick() -> dict:
             if (not res.get("attendance_asked_at")
                     and _due(res["reservation_at"],
                              config.minutes(config.ATTENDANCE_ASK_AFTER_MIN))):
+                if not db.claim_reservation(res["id"], "attendance_asked_at",
+                                            now.isoformat()):
+                    continue
                 admin.ask_attendance(res)
-                db.update_reservation(res["id"],
-                                      attendance_asked_at=now.isoformat())
                 done["attendance"] += 1
                 continue
 
@@ -97,6 +105,9 @@ def tick() -> dict:
                     and _ts(res["reservation_at"]) > config.now_utc()
                     and _due(res["reservation_at"],
                              -config.minutes(config.REMINDER_BEFORE_MIN))):
+                if not db.claim_reservation(res["id"], "reminder_sent_at",
+                                            now.isoformat()):
+                    continue
                 lang = res.get("language") or "ar"
                 get_adapter(res["platform"]).send_text(
                     User(res["platform"], res["user_id"], res["user_id"]),
@@ -104,8 +115,6 @@ def tick() -> dict:
                             table=admin._table_number(res),
                             hall=admin._hall_name(res, lang),
                             time=admin._fmt_time(res)))
-                db.update_reservation(res["id"],
-                                      reminder_sent_at=now.isoformat())
                 done["reminder"] += 1
 
         except Exception as exc:  # noqa: BLE001

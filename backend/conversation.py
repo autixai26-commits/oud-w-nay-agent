@@ -22,6 +22,7 @@ from datetime import date as Date
 import admin
 import ai
 import booking
+import slots
 import config
 import db
 import texts
@@ -236,8 +237,8 @@ def _cancel_nav(lang):
     return [(texts.t(lang, "btn_cancel_booking"), "B:x")]
 
 
-def _ask_type(adapter, user, lang) -> None:
-    _save(user, state="bk_type", data={})
+def _ask_type(adapter, user, lang, data=None) -> None:
+    _save(user, state="bk_type", data=data if data is not None else {})
     adapter.send_buttons(user, texts.t(lang, "ask_booking_type"), [
         (texts.t(lang, "btn_family"), "B:t:family"),
         (texts.t(lang, "btn_singles"), "B:t:singles"),
@@ -306,6 +307,90 @@ def _ask_phone(adapter, user, lang, data) -> None:
     _save(user, state=ST_PHONE, data=data)
     adapter.send_buttons(user, texts.t(lang, "ask_phone"), [],
                          nav=_cancel_nav(lang))
+
+
+def _advance(adapter, user, lang, data) -> None:
+    """يسأل عن أول حقل ناقص — لا عن التالي في سلسلة ثابتة.
+
+    هذا هو الفرق بين آلة حالات خطية وفهم فعلي: ما تحت ترتيب
+    أفضلية لا مسار إجباري، فأي حقل وصل مع الرسالة يُتخطّى سؤاله
+    مهما كان موضعه. ومنه تقفز «بكرا شخصين الساعة 4» إلى الاسم مباشرة.
+
+    وكل قيمة تُعاد موازاتها هنا لا عند مصدرها، لأن الحقول تصل بأي
+    ترتيب: النوع قد يأتي بعد التاريخ، فمنع SPEC 5.4 يُفحص عند اكتمال
+    الاثنين لا عند ضغطة زر التاريخ وحدها.
+    """
+    if not data.get("type"):
+        return _ask_type(adapter, user, lang, data)
+
+    day = None
+    if data.get("date"):
+        try:
+            day = Date.fromisoformat(data["date"])
+        except ValueError:
+            data.pop("date", None)
+    if day is None:
+        return _ask_date(adapter, user, lang, data)
+
+    # SPEC 5.4 — المنع المبكر، قبل توليد أي رابط.
+    if booking.reject_reason(data["type"], day):
+        data.pop("date", None)
+        _save(user, state="bk_date", data=data)
+        adapter.send_buttons(user, texts.t(lang, "singles_family_day"), [],
+                             nav=[(texts.t(lang, "btn_back"), "B"),
+                                  (texts.t(lang, "btn_main_menu"), "H")])
+        return None
+
+    hour = data.get("hour")
+    # ساعة سليمة نحواً قد تكون قد فاتت اليوم (SPEC 6.1.4).
+    if hour and hour not in booking.available_hours(day):
+        data.pop("hour", None)
+        hour = None
+    if not hour:
+        period = data.pop("period", None)
+        if period and booking.available_hours(day, period):
+            return _ask_hour(adapter, user, lang, data, period)
+        return _ask_period(adapter, user, lang, data)
+
+    party = data.get("party")
+    if party and party >= config.LARGE_GROUP_MIN:
+        data["large"] = True      # SPEC 5.8 — المسار اليدوي
+    if not party:
+        return _ask_party(adapter, user, lang, data)
+
+    if not data.get("name"):
+        return _ask_name(adapter, user, lang, data)
+    if not data.get("phone"):
+        return _ask_phone(adapter, user, lang, data)
+
+    if data.get("large"):
+        if not data.get("group_type"):
+            return _ask_group_type(adapter, user, lang, data)
+        if not data.get("occasion"):
+            _save(user, state=ST_LG_OCCASION, data=data)
+            adapter.send_buttons(user, texts.t(lang, "ask_occasion"), [],
+                                 nav=_cancel_nav(lang))
+            return None
+        return _finish_large_group(adapter, user, lang, data)
+    return _finish_booking(adapter, user, lang, data)
+
+
+def _apply_slots(data: dict, found: dict) -> list:
+    """يدمج المستخرَج فوق الموجود ويعيد أسماء ما تغيّر فعلاً.
+
+    الدمج فوقيّ لا استبداليّ: تغيير الساعة وحدها لا يمحو التاريخ ولا
+    العدد ولا الاسم. وهو ما يجعل «خليها الساعة 8» تعديل حقل واحد
+    بدل إعادة الحجز من الصفر.
+    """
+    changed = []
+    for key in ("type", "date", "hour", "party", "period"):
+        if key in found and data.get(key) != found[key]:
+            data[key] = found[key]
+            changed.append(key)
+    if "hour" in found:
+        # ساعة صريحة تُغني عن الفترة وقد تناقضها.
+        data.pop("period", None)
+    return changed
 
 
 def _finish_booking(adapter, user, lang, data) -> None:
@@ -486,21 +571,15 @@ def _handle_booking(adapter, user, lang, parts) -> None:
 
     if kind == "t" and len(parts) > 2:        # نوع الحجز
         data["type"] = "singles" if parts[2] == "singles" else "family"
-        return _ask_date(adapter, user, lang, data)
+        return _advance(adapter, user, lang, data)
 
     if kind == "d" and len(parts) > 2:        # التاريخ
         try:
             day = Date.fromisoformat(parts[2])
         except ValueError:
             return _ask_date(adapter, user, lang, data)
-        # SPEC 5.4 — المنع المبكر: يُرفض هنا قبل توليد أي رابط.
-        if booking.reject_reason(data.get("type", "family"), day):
-            adapter.send_buttons(user, texts.t(lang, "singles_family_day"), [],
-                                 nav=[(texts.t(lang, "btn_back"), "B:t:singles"),
-                                      (texts.t(lang, "btn_main_menu"), "H")])
-            return None
         data["date"] = day.isoformat()
-        return _ask_period(adapter, user, lang, data)
+        return _advance(adapter, user, lang, data)
 
     if kind == "p":                           # الفترة
         if len(parts) > 2 and parts[2] in booking.PERIODS:
@@ -519,12 +598,7 @@ def _handle_booking(adapter, user, lang, parts) -> None:
                 Date.fromisoformat(data["date"])):
             return _ask_period(adapter, user, lang, data)
         data["hour"] = hour
-        # في التعديل: العدد موروث من الحجز الأصلي، فنمضي مباشرة.
-        if data.get("editing") and data.get("party"):
-            if data.get("name") and data.get("phone"):
-                return _finish_booking(adapter, user, lang, data)
-            return _ask_name(adapter, user, lang, data)
-        return _ask_party(adapter, user, lang, data)
+        return _advance(adapter, user, lang, data)
 
     if kind == "n" and len(parts) > 2:        # عدد الأشخاص
         try:
@@ -540,9 +614,7 @@ def _handle_booking(adapter, user, lang, parts) -> None:
                                  nav=_cancel_nav(lang))
             return None
         data["party"] = size
-        if data.get("editing") and data.get("name") and data.get("phone"):
-            return _finish_booking(adapter, user, lang, data)
-        return _ask_name(adapter, user, lang, data)
+        return _advance(adapter, user, lang, data)
 
     if kind == "g" and len(parts) > 2:        # نوع المجموعة الكبيرة
         data["group_type"] = parts[2]
@@ -619,22 +691,29 @@ def _handle_input(adapter, user, lang, state, text) -> bool:
         if not value:
             _ask_name(adapter, user, lang, data)
             return True
+        # «خليها الساعة 8» جواباً عن سؤال الاسم تصحيحٌ لا اسم. الأسماء
+        # لا تحمل مراسي الحجز، فالتمييز آمن.
+        found = slots.extract(value)
+        if found and _apply_slots(data, found):
+            _advance(adapter, user, lang, data)
+            return True
         data["name"] = value[:80]
-        _ask_phone(adapter, user, lang, data)
+        _advance(adapter, user, lang, data)
         return True
 
     if state == ST_PHONE:
-        digits = _digits_only(value)
+        digits = slots.phone_digits(value)
         # رقم أردني معقول: 9 أو 10 خانات. أقل من ذلك خطأ إدخال.
         if not 9 <= len(digits) <= 13:
+            found = slots.extract(value)
+            if found and _apply_slots(data, found):
+                _advance(adapter, user, lang, data)
+                return True
             adapter.send_buttons(user, texts.t(lang, "invalid_phone"), [],
                                  nav=_cancel_nav(lang))
             return True
         data["phone"] = digits
-        if data.get("large"):
-            _ask_group_type(adapter, user, lang, data)
-        else:
-            _finish_booking(adapter, user, lang, data)
+        _advance(adapter, user, lang, data)
         return True
 
     if state == ST_LG_SIZE:
@@ -644,7 +723,7 @@ def _handle_input(adapter, user, lang, state, text) -> bool:
                                  nav=_cancel_nav(lang))
             return True
         data["party"] = int(digits)
-        _ask_name(adapter, user, lang, data)
+        _advance(adapter, user, lang, data)
         return True
 
     if state == ST_LG_OCCASION:
@@ -672,16 +751,17 @@ def handle_text(user: User, text: str, lang) -> None:
     # SPEC 8: لا زر ولا شاشة. اللغة تُكتشف من كل رسالة، وتتحوّل تلقائياً
     # متى كتب الزبون بلغة أخرى فعلاً. الرسائل القصيرة جداً لا تُبدّلها
     # حتى لا تقلبها كلمة إنجليزية عابرة داخل محادثة عربية.
-    detected = texts.detect_language(stripped)
-    if not lang:
-        lang = detected
+    # لغة الرد تتبع آخر رسالة من الزبون دائماً وبلا استثناء. كانت هنا
+    # عتبة «كلمتان فأكثر» تمنع التبديل، فتبقى المحادثة عالقة بلغة قديمة
+    # أمام رسالة عربية قصيرة — وهو ما ظهر ردّاً إنجليزياً وسط محادثة
+    # عربية بالكامل. ورسالة بلا حروف (رقم هاتف) لا تبدّل شيئاً.
+    signal = texts.language_signal(stripped)
+    if signal and signal != lang:
+        lang = signal
         db.save_user_state(user.platform, user.user_id, language=lang)
-    elif detected != lang and len(stripped.split()) >= 2:
-        lang = detected
+    elif not lang:
+        lang = texts.DEFAULT_LANG
         db.save_user_state(user.platform, user.user_id, language=lang)
-        if stripped in ("/start", "start", ""):
-            _screen_main(adapter, user, lang, greeting=True)
-            return None
 
     if stripped in ("/start", "/menu", "start"):
         _screen_main(adapter, user, lang, greeting=stripped != "/menu")
@@ -705,11 +785,35 @@ def handle_text(user: User, text: str, lang) -> None:
     # النية تعود كوجهة زر، فنمرّرها لنفس معالج الأزرار: الكلام الحر
     # والزر يسلكان المسار ذاته بالبناء لا بالتوافق.
     target = ai.detect_intent(stripped)
+
+    # طبقة استخراج الحقول: أي رسالة قد تحمل تاريخاً ووقتاً وعدداً معاً،
+    # فيُقرأ ما فيها قبل أن يُطرح أي سؤال.
+    found = slots.extract(stripped)
+
+    # داخل تدفق قائم: يُحدَّث الحقل المذكور فقط وما عداه يبقى.
+    if current.startswith("bk_") and found:
+        data = _data(user)
+        if _apply_slots(data, found):
+            return _advance(adapter, user, lang, data)
+
     if target:
         if current.startswith("bk_") and target == "B":
             # داخل تدفق نشط «بدي احجز يوم ثاني» نقلٌ لا بدءٌ من الصفر.
             return _ask_date(adapter, user, lang, _data(user))
+        if target == "B" and found:
+            # «بدي احجز بكرا لأربعة»: النيّة تبدأ والحقول تُملأ معاً.
+            fresh: dict = {}
+            _apply_slots(fresh, found)
+            return _advance(adapter, user, lang, fresh)
         return handle_callback(user, target, lang)
+
+    # رسالة بلا فعل حجز صريح لكنها تحمل حقلَي حجز أو أكثر هي طلب حجز
+    # ضمناً: «بكرا شخصين الساعة 4». حقل واحد لا يكفي — «بكرا» وحدها قد
+    # تكون سؤالاً عن الدوام، وفتح تدفق حجز بلا طلب أسوأ من سؤال إضافي.
+    if slots.count(found) >= 2:
+        fresh = {}
+        _apply_slots(fresh, found)
+        return _advance(adapter, user, lang, fresh)
 
     # سؤال حر: القواعد الثابتة تُفرض داخل ai.reply_to قبل النموذج.
     adapter.send_buttons(user, ai.reply_to(stripped, lang), [],

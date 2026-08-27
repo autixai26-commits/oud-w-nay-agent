@@ -354,6 +354,24 @@ _ARABIC = _re.compile(r"[\u0600-\u06FF]")
 _LATIN = _re.compile(r"[A-Za-z]")
 
 
+def language_signal(text: str):
+    """يعيد 'ar' أو 'en' أو None حين لا حروف في الرسالة.
+
+    التمييز عن detect_language مقصود: رسالة بلا حروف — رقم هاتف مثلاً —
+    لا تحمل دليلاً على لغة، فلا يجوز أن تقلب لغة المحادثة. ذاك يرجّح
+    العربية عند الغموض لأنه ملزَم بإعادة لغة، وهذا يعيد «لا أدري»
+    فتُحفظ اللغة القائمة.
+    """
+    body = text or ""
+    ar = len(_ARABIC.findall(body))
+    en = len(_LATIN.findall(body))
+    if not ar and not en:
+        return None
+    if ar:
+        return "en" if en > ar * 2 and en >= 3 else "ar"
+    return "en"
+
+
 def detect_language(text: str) -> str:
     """يعيد 'ar' أو 'en' حسب الحروف الغالبة في الرسالة.
 

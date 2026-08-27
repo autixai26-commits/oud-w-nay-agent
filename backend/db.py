@@ -134,6 +134,27 @@ def update_reservation(res_id: int, **fields) -> dict | None:
     return rows[0] if rows else None
 
 
+def claim_reservation(res_id: int, field: str, stamp: str) -> bool:
+    """يحجز إجراءً لمرة واحدة: يكتب الطابع فقط إن كان الحقل فارغاً.
+
+    الشرط جزء من جملة UPDATE نفسها، فالفحص والكتابة ذرّيان على مستوى
+    القاعدة. أما الفحص في بايثون ثم الكتابة فيترك بينهما نافذة تكفي
+    لدورتَي جدولة متزامنتين أن تمرّا معاً وترسلا الرسالة مرتين — وهو
+    ما يحدث فعلاً عند نشر جديد على Render، إذ تعمل النسخة القديمة
+    والجديدة لحظاتٍ معاً على قاعدة البيانات ذاتها.
+    """
+    rows = (client().table("reservations").update({field: stamp})
+            .eq("id", res_id).is_(field, "null").execute().data)
+    return bool(rows)
+
+
+def claim_status(res_id: int, expected: str, new: str) -> bool:
+    """ينقل الحالة فقط إن كانت لا تزال هي المتوقَّعة — نفس مبدأ الحجز."""
+    rows = (client().table("reservations").update({"status": new})
+            .eq("id", res_id).eq("status", expected).execute().data)
+    return bool(rows)
+
+
 def reservations_on(day: str) -> list[dict]:
     """كل حجوزات تاريخ محلي معيّن مرتبة بالموعد — /today و/date واللوحة."""
     return (client().table("reservations").select("*")
