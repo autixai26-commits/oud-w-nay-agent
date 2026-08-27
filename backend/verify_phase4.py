@@ -31,6 +31,7 @@ import telegram_api   # noqa: E402
 import texts          # noqa: E402
 from platform_adapter import User  # noqa: E402
 
+PLATFORM = "verify4"   # منصّة الاختبار — الإنتاج يتخطّاها
 UID = "__v4_cust__"
 ADMIN_ID = "__v4_admin__"
 ok = True
@@ -46,7 +47,7 @@ def check(passed: bool, line: str) -> None:
 
 class Fake(platform_adapter.BaseAdapter):
     """يلتقط الرسائل بدل إرسالها، ويفرزها حسب المستقبِل."""
-    platform = "telegram"
+    platform = PLATFORM
 
     @staticmethod
     def _put(user, text):
@@ -112,22 +113,23 @@ def main() -> int:
     print("TEST_TIME_SCALE = %s  →  كل دقيقة تساوي %.1f ثانية"
           % (config.TEST_TIME_SCALE, config.minutes(1).total_seconds()))
 
+    platform_adapter.ADAPTERS[PLATFORM] = Fake()
     platform_adapter.ADAPTERS["telegram"] = Fake()
     telegram_api.send_message = fake_send_message
     telegram_api.edit_message_text = fake_edit
 
     cleanup()
-    cust = User("telegram", UID, UID)
-    adm = User("telegram", ADMIN_ID, ADMIN_ID)
+    cust = User(PLATFORM, UID, UID)
+    adm = User(PLATFORM, ADMIN_ID, ADMIN_ID)
 
     # ------------------------------------------- 1) تسجيل الأدمن
     print("\n1) تسجيل الأدمن (SPEC 10.1)")
     check(admin.try_register(adm, "wrong-secret", "") == "admin_bad_secret",
           "سر خاطئ يُرفض")
-    check(not db.is_admin("telegram", ADMIN_ID), "لم يُسجَّل بالسر الخاطئ")
+    check(not db.is_admin(PLATFORM, ADMIN_ID), "لم يُسجَّل بالسر الخاطئ")
     check(admin.try_register(adm, config.ADMIN_SETUP_SECRET, "مدير")
           == "admin_registered", "السر الصحيح يسجّل الأدمن")
-    check(db.is_admin("telegram", ADMIN_ID), "صار أدمن في قاعدة البيانات")
+    check(db.is_admin(PLATFORM, ADMIN_ID), "صار أدمن في قاعدة البيانات")
     check(admin.try_register(adm, config.ADMIN_SETUP_SECRET, "")
           == "admin_already", "التسجيل مرتين لا يكرّر")
 
@@ -137,17 +139,17 @@ def main() -> int:
     db.client().table("user_state").delete().eq("user_id", ADMIN_ID).execute()
     to_customer.clear(); to_admin.clear()
     conversation.handle_text(adm, "/admin " + config.ADMIN_SETUP_SECRET, None)
-    check(db.is_admin("telegram", ADMIN_ID),
+    check(db.is_admin(PLATFORM, ADMIN_ID),
           "/admin يعمل لمستخدم جديد بلا لغة محفوظة")
     # SPEC 8 بعد التعديل: لا شاشة لغة إطلاقاً — تُكتشف من نص الرسالة.
     to_customer.clear(); to_admin.clear()
     db.client().table("user_state").delete().eq(
         "user_id", "__nolang__").execute()
-    conversation.handle_text(User("telegram", "__nolang__", "__nolang__"),
+    conversation.handle_text(User(PLATFORM, "__nolang__", "__nolang__"),
                              "Hello, I want a table", None)
     check(not any(texts.AR["choose_language"] in m for m in to_customer),
           "لا تظهر شاشة اختيار اللغة لمستخدم جديد")
-    check(db.get_language("telegram", "__nolang__") == "en",
+    check(db.get_language(PLATFORM, "__nolang__") == "en",
           "اللغة تُكتشف وتُحفظ من أول رسالة")
     db.client().table("user_state").delete().eq(
         "user_id", "__nolang__").execute()
@@ -162,7 +164,7 @@ def main() -> int:
     table = booking.available_tables(day, 2, "family")[0]
 
     res = db.client().table("reservations").insert({
-        "code": "V4TEST", "platform": "telegram", "user_id": UID,
+        "code": "V4TEST", "platform": PLATFORM, "user_id": UID,
         "customer_name": "زبون اختبار", "customer_phone": "0790000000",
         "party_size": 2, "booking_type": "family", "table_id": table["id"],
         "reservation_date": day.isoformat(),
@@ -256,7 +258,7 @@ def main() -> int:
     # ------------------------------- 8) الحضور والتحرير اليدوي
     print("\n8) تسجيل الحضور وتحرير الطاولة (SPEC 6.4 و 10.2)")
     res2 = db.client().table("reservations").insert({
-        "code": "V4SEAT", "platform": "telegram", "user_id": UID,
+        "code": "V4SEAT", "platform": PLATFORM, "user_id": UID,
         "customer_name": "زبون ثانٍ", "customer_phone": "0790000001",
         "party_size": 2, "booking_type": "family", "table_id": table["id"],
         "reservation_date": day.isoformat(),
@@ -275,7 +277,7 @@ def main() -> int:
     # ------------------------- 9) إلغاء الزبون بلا موافقة أدمن
     print("\n9) إلغاء الزبون لحجزه (SPEC 6.5)")
     res3 = db.client().table("reservations").insert({
-        "code": "V4CANC", "platform": "telegram", "user_id": UID,
+        "code": "V4CANC", "platform": PLATFORM, "user_id": UID,
         "customer_name": "زبون ثالث", "customer_phone": "0790000002",
         "party_size": 2, "booking_type": "family", "table_id": table["id"],
         "reservation_date": day.isoformat(),
@@ -328,7 +330,7 @@ def main() -> int:
           "تُستعمل لوحة الرد لا الأزرار الداخلية — فيظهر الاختيار فقاعةً")
     labels = [b["text"] for row in mk.get("keyboard", []) for b in row]
     check("عائلة" in labels and "إلغاء" in labels, "نصوص الأزرار كما هي")
-    kb = ((db.get_user_state("telegram", UID) or {}).get("data") or {}).get("_kb")
+    kb = ((db.get_user_state(PLATFORM, UID) or {}).get("data") or {}).get("_kb")
     check(bool(kb) and kb.get("عائلة") == "B:t:family",
           "خريطة النص ← الإجراء محفوظة لترجمة ردّ الزبون")
 

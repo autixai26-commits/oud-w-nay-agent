@@ -38,7 +38,15 @@ def tick() -> dict:
     done = {"alert2": 0, "reminder": 0, "attendance": 0, "auto_cancel": 0}
     now = config.now_utc()
 
+    from platform_adapter import ADAPTERS
+
     for res in db.reservations_by_status(["pending", "confirmed"]):
+        # منصّة لا محوّل لها لا يمكن إشعار صاحبها أصلاً، فتخطّيها هو
+        # السلوك الصحيح. وله أثر عملي مهم: بيئة الاختبار تستعمل منصّة
+        # خاصة بها، فلا تلتقط خدمةُ الإنتاج صفوفَ الاختبار ولا تستهلك
+        # تذكيراتها — وكلتاهما تمسحان قاعدة البيانات نفسها.
+        if res.get("platform") not in ADAPTERS:
+            continue
         try:
             # -------- تنبيه الأدمن الثاني بعد 15 دقيقة بلا رد (SPEC 6.3.5)
             if (res["status"] == "pending"

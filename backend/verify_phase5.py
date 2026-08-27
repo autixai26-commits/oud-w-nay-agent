@@ -157,6 +157,7 @@ def main() -> int:
     extra_checks()
     extra_checks_v2()
     extra_checks_v3()
+    extra_checks_v4()
 
     # المحوّل يحفظ خريطة الأزرار في حالة المستخدم، فيخلّف أثراً
     # للمستخدمين الوهميين. ننظّفه حتى لا يلوّث قاعدة الإنتاج.
@@ -243,7 +244,7 @@ def extra_checks_v2() -> None:
         voice.shorten = real
     body = seen.get("text", "")
     check(voice.SHISHA_SPOKEN in body, "التصحيح يمر فعلياً قبل محرّك الصوت")
-    check("ثمانية" in body, "ومعه تحويل الأرقام في نفس المسار")
+    check("تمن" in body, "ومعه تحويل الأرقام في نفس المسار")
 
 
 
@@ -306,9 +307,53 @@ def extra_checks_v3() -> None:
     body = seen.get("text", "")
     check("مُشَكَّلة" in body, "التشكيل مطبَّق")
     check(voice.SHISHA_SPOKEN in body, "تصحيح النطق مطبَّق")
-    check("ثمانية" in body, "تحويل الأرقام مطبَّق")
+    check("تمن" in body, "تحويل الأرقام مطبَّق")
     check("8.750" not in body and "أرجيلة" not in body,
           "ولا بقايا من الصور الأصلية")
+
+
+
+
+def extra_checks_v4() -> None:
+    """الجولة الرابعة: G صلبة، ونصف الدينار، والثمانية الأردنية."""
+    print("\n15) صوت G الصلب في «أرجيلة» (مرجع مشروع العيادة)")
+    check(voice.SHISHA_SPOKEN == "أرغيلة",
+          "تُكتب بالغين — أقرب حرف عربي للـG الصلبة في النطق الآلي")
+    check(voice.VOICE_SETTINGS.get("stability") == 0.45
+          and voice.VOICE_SETTINGS.get("style") == 0
+          and voice.VOICE_SETTINGS.get("use_speaker_boost") is True,
+          "إعدادات الصوت ممرَّرة — بدونها يعود المحرّك للجيم الناعمة")
+    out = voice.fix_pronunciation("عندنا أرجيلة وأرجيلة عجمي", "ar")
+    check("أرجيلة" not in out and out.count("أرغيلة") == 2,
+          "كل مواضع الكلمة تُعالَج — %s" % out)
+
+    print("\n16) نصف الدينار يُنطق «ونص» (SPEC 9)")
+    for src, want in (("7.500 د.أ", "سبعة ونص"), ("6.500 د.أ", "ستة ونص"),
+                      ("2.500 د.أ", "اثنين ونص"), ("10.500 د.أ", "عشرة ونص")):
+        got = voice.spoken_numbers(src, "ar")
+        check(got == want, "«%s» ← %s" % (src, got))
+    # الكسور الأخرى تبقى بالفلوس
+    check("فلس" in voice.spoken_numbers("3.750 د.أ", "ar"),
+          "والكسور غير النصف تبقى بالفلوس")
+
+    print("\n17) الثمانية باللهجة الأردنية «تمن» (SPEC 9)")
+    check(voice.number_words_ar(8) == "تمن", "المفرد: تمن")
+    check(voice.number_words_ar(18) == "تمنتعش", "الثامن عشر: تمنتعش")
+    check(voice.number_words_ar(80) == "تمانين", "الثمانون: تمانين")
+    check(voice.number_words_ar(800) == "تمنمية", "الثمانمئة: تمنمية")
+    check("ثماني" not in voice.number_words_ar(888),
+          "ولا أثر للفصحى في 888 — %s" % voice.number_words_ar(888))
+    check("التامنة" in voice.spoken_numbers("الساعة 8:00", "ar"),
+          "والساعة الثامنة: التامنة")
+    check("تمن" in voice.spoken_numbers("8.000 د.أ", "ar"),
+          "والسعر: %s" % voice.spoken_numbers("8.000 د.أ", "ar"))
+
+    print("\n18) المحرّك يعيد ogg/opus مباشرة")
+    check(voice.TTS_OUTPUT_FORMAT == "opus_48000_32",
+          "الصيغة المطلوبة هي صيغة تليجرام الرسمية للرسالة الصوتية")
+    audio = voice.render("عندنا أرجيلة بسبعة ونص", "ar")
+    check(bool(audio) and audio[:4] == b"OggS",
+          "الناتج ogg بلا حاجة لتحويل ffmpeg (%d بايت)" % len(audio))
 
 
 if __name__ == "__main__":
