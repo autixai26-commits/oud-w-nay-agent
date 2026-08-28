@@ -319,3 +319,22 @@ def phone_digits(text: str) -> str:
     spoken = "".join(_SPOKEN_DIGITS.get(word, "")
                      for word in re.split(r"[^\w]+", normalize(text)))
     return spoken if len(spoken) >= 9 else digits
+
+
+# -------------------------------------------------------------- التحية
+# التحية الاستهلالية إشارةُ «فاتحة محادثة»: من يبدأ بها لا يكمّل جواباً
+# عن سؤال سابق. تُطابَق بحدود كلمات لا بتضمين، وإلا التقطت «هلا» داخل
+# «مهلاً» و«hi» داخل «this».
+_GREETINGS = (
+    "مرحبا", "مرحبتين", "هلا", "اهلا", "اهلين", "يا هلا",
+    "السلام عليكم", "سلام عليكم", "صباح الخير", "مساء الخير",
+    "hi", "hello", "hey", "heya", "hiya",
+    "good morning", "good evening", "good afternoon", "greetings",
+)
+_GREETING_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(_n(g)) for g in _GREETINGS) + r")\b")
+
+
+def is_greeting(text: str) -> bool:
+    """هل تحمل الرسالة تحيةً استهلالية؟"""
+    return bool(_GREETING_RE.search(normalize(text)))

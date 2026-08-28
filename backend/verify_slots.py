@@ -270,6 +270,90 @@ def main() -> int:                                    # noqa: C901
     check(second_tick["reminder"] == 0 and not sent,
           "الدورة الثانية لم ترسل شيئاً")
 
+    # ------------------------------ 8) الحالة المعلّقة تُقيَّم لا تُفرض
+    print("\n8) الحالة المعلّقة تُقيَّم عند كل رسالة")
+
+    # قرار التقييم وحده، قبل المحادثة كاملة
+    for state, phrase, want, why in [
+            (conversation.ST_PHONE, "Hi i wanna book a table", True,
+             "تحية + طلب صريح وسط انتظار الهاتف"),
+            (conversation.ST_PHONE, "بدي احجز طاولة", True,
+             "طلب حجز صريح وسط انتظار الهاتف"),
+            (conversation.ST_PHONE, "0793239393", False, "رقم سليم يكمل"),
+            (conversation.ST_PHONE, "٠٧٩٣٢٣٩٣٩٣", False, "رقم عربي يكمل"),
+            (conversation.ST_PHONE, "07932", False,
+             "رقم ناقص خطأ إدخال لا طلب جديد"),
+            (conversation.ST_PHONE, "خليها الساعة 8", False,
+             "تصحيح حقل لا طلب جديد"),
+            (conversation.ST_NAME, "أسامة", False, "اسم عادي يكمل"),
+            (conversation.ST_NAME, "خليها الساعة 8", False,
+             "تصحيح وسط سؤال الاسم يبقى تصحيحاً"),
+            (conversation.ST_NAME, "بدي احجز بكرا", True,
+             "طلب صريح لا يُسجَّل اسماً"),
+            (conversation.ST_LG_OCCASION, "عيد ميلاد", False,
+             "مناسبة عادية تكمل"),
+            ("bk_date", "بدي احجز يوم ثاني", False,
+             "نقل داخل تدفق قائم لا إلغاء له"),
+            ("bk_date", "Hi i wanna book a table", True,
+             "تحية مع طلب تُنهي حتى حالة أزرار")]:
+        got = conversation._starts_over(state, phrase)
+        check(got == want, "[%s] «%s» -> %s (%s)"
+              % (state, phrase, "طلب جديد" if got else "استمرار", why))
+
+    check(slots.is_greeting("مهلا شوي") is False,
+          "«مهلا» ليست «هلا» — الحدود لا التضمين")
+    check(slots.is_greeting("this is fine") is False,
+          "«this» ليست «hi»")
+
+    # المحادثة كاملة: الحالة الحرفية من الصورة
+    print("\n   المحادثة العالقة كما في الصورة")
+    cleanup()
+    run(user, "ar", ["#بكرا 4 اشخاص الساعة 5", "B:t:family", "#أسامة"])
+    check(conversation._state(user).get("state") == conversation.ST_PHONE,
+          "المحادثة عالقة بانتظار رقم الهاتف")
+
+    # main.py يقرأ اللغة المحفوظة ويمرّرها، فنحاكي ذلك لا نفترض الجديدة.
+    msgs = run(user, db.get_language("telegram", UID),
+               ["#Hi i wanna book a table"])
+    check(not asked(msgs, "invalid_phone"),
+          "لم يردّ «الرقم مش واضح» على رسالة استهلالية")
+    check(any(texts.t("en", "ask_booking_type") in (m["text"] or "")
+              for m in msgs),
+          "بدأ تدفق حجز جديد نظيف")
+    fresh_data = conversation._data(user)
+    check(not fresh_data.get("date") and not fresh_data.get("party"),
+          "بلا بقايا من التدفق القديم: %s"
+          % {k: v for k, v in fresh_data.items() if not k.startswith("_")})
+    check(db.get_language("telegram", UID) == "en",
+          "وردّ بالإنجليزية كلغة الرسالة")
+
+    # وبالعربية كذلك
+    cleanup()
+    run(user, "ar", ["#بكرا 4 اشخاص الساعة 5", "B:t:family", "#أسامة"])
+    msgs = run(user, "ar", ["#بدي احجز طاولة"])
+    check(not asked(msgs, "invalid_phone") and asked(msgs,
+                                                     "ask_booking_type"),
+          "«بدي احجز طاولة» وسط انتظار الهاتف تبدأ تدفقاً جديداً")
+
+    # وأن التعديل وسط التدفق لم ينكسر بهذا كله
+    cleanup()
+    run(user, "ar", ["#بكرا 4 اشخاص الساعة 5", "B:t:family"])
+    kept = dict(conversation._data(user))
+    run(user, "ar", ["#خليها الساعة 8"])
+    now_data = conversation._data(user)
+    check(now_data.get("hour") == 20
+          and now_data.get("date") == kept.get("date")
+          and now_data.get("party") == kept.get("party"),
+          "«خليها الساعة 8» لا تزال تعديلاً لحقل واحد")
+
+    # ورقم ناقص يبقى خطأ إدخال لا طلباً جديداً
+    cleanup()
+    run(user, "ar", ["#بكرا 4 اشخاص الساعة 5", "B:t:family", "#أسامة"])
+    msgs = run(user, "ar", ["#07932"])
+    check(asked(msgs, "invalid_phone"), "رقم ناقص يبقى خطأ إدخال")
+    check(conversation._state(user).get("state") == conversation.ST_PHONE,
+          "والحالة تبقى بانتظار الهاتف")
+
     cleanup()
     print("\n" + "=" * 66)
     print("النتيجة: %s" % ("نجح كل الفحوصات" if ok else "في فحوصات فاشلة"))

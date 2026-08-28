@@ -682,6 +682,41 @@ def handle_callback(user: User, data: str, lang: str) -> None:
     return _screen_main(adapter, user, lang)
 
 
+_INPUT_STATES = (ST_NAME, ST_PHONE, ST_LG_SIZE, ST_LG_OCCASION)
+
+
+def _starts_over(state: str, value: str) -> bool:
+    """هل هذه الرسالة بدايةُ طلب جديد لا استمرارٌ للحقل المنتظر؟
+
+    الحالة المعلّقة كانت تُفرض على كل رسالة واردة لمجرّد وجودها: حالةٌ
+    عالقة تنتظر رقم هاتف تبتلع «Hi i wanna book a table» وترد «الرقم مش
+    واضح»، والزبون لم يكن يعطي رقماً أصلاً. فصار القرار تحليلاً للمحتوى:
+    شكلُ الرسالة أولاً، ثم نيّتها.
+
+    الشكل يُقدَّم حيث يكون الحقل مقيَّد الشكل — رقم يبقى رقماً مهما شابه
+    من كلمات، فلا تخطفه نيّة متوهَّمة. وحيث يكون الحقل حرّ الشكل (الاسم،
+    المناسبة) تحسم النيّة الصريحة والتحية الاستهلالية.
+
+    وهذا ليس مسحاً للحالة عند كل رسالة: «خليها الساعة 8» بلا تحية وبلا
+    نيّة زر تبقى تعديلاً لتدفق قائم كما ضُبطت. الفرق أن هناك تصحيحَ حقل،
+    وهنا طلبٌ جديد معلن.
+    """
+    intent = ai.detect_intent(value)
+    greeting = slots.is_greeting(value)
+
+    if state in _INPUT_STATES:
+        # سبع خانات فأكثر: محاولةُ رقم بلا شك، ولو نقصت خانة أو زادت.
+        if state == ST_PHONE and len(slots.phone_digits(value)) >= 7:
+            return False
+        if state == ST_LG_SIZE and slots.digits_only(value):
+            return False
+        return greeting or intent is not None
+
+    # حالات الأزرار: تقدّم الزبون محفوظ فيها، فلا يُلغى إلا بتحية مع
+    # طلب صريح معاً — وهي فاتحة محادثة لا التباس فيها.
+    return greeting and intent is not None
+
+
 def _handle_input(adapter, user, lang, state, text) -> bool:
     """يعالج الإدخال النصي أثناء تدفق الحجز. يعيد True إن استهلك الرسالة."""
     data = _data(user)
@@ -767,8 +802,15 @@ def handle_text(user: User, text: str, lang) -> None:
         _screen_main(adapter, user, lang, greeting=stripped != "/menu")
         return None
 
+    # الحالة المعلّقة تُقيَّم قبل أن تُفرض: رسالةٌ لا تخصّ الحقل المنتظر
+    # تُنهيه بدل أن تُحقن فيه.
+    state_now = _state(user).get("state") or ""
+    if state_now not in ("", "main") and _starts_over(state_now, stripped):
+        _save(user, state="main", data={})
+        state_now = "main"
+
     # إدخال ضمن تدفق الحجز له الأولوية على الأسئلة الحرة.
-    if _handle_input(adapter, user, lang, _state(user).get("state"), stripped):
+    if _handle_input(adapter, user, lang, state_now, stripped):
         return None
 
     # ضغطة زر تصل كرسالة نصية عادية (لوحة الرد)، فنترجم نصّها
