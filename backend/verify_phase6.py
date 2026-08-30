@@ -152,8 +152,14 @@ def main_run() -> int:
 
     filtered = client.get(
         "/api/admin/reservations?token=%s&status=cancelled" % token).json()
-    check([r["code"] for r in filtered["rows"]] == ["V6B002"],
-          "فلتر الحالة يعمل")
+    codes = [r["code"] for r in filtered["rows"]]
+    # لا نساوي القائمة بحجز الفحص وحده: القاعدة مشتركة مع الإنتاج، وأي
+    # حجز ملغى حقيقي من زبون كان يُسقط الفحص بلا خلل في الفلتر أصلاً.
+    # الفلتر صحيح متى ظهر حجزنا ولم يظهر معه ما ليس ملغى.
+    check("V6B002" in codes, "فلتر الحالة يُظهر الحجز الملغى")
+    check(all(r["status"] == "cancelled" for r in filtered["rows"]),
+          "ولا يُظهر أي حالة أخرى (%d صف)" % len(codes))
+    check("V6B001" not in codes, "والحجز المؤكَّد خارج النتيجة")
 
     other = client.get(
         "/api/admin/reservations?token=%s&date=2030-01-01" % token).json()

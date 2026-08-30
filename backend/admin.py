@@ -8,6 +8,7 @@ import logging
 from datetime import date as Date
 
 import booking
+import admin_nlu
 import config
 import db
 import telegram_api
@@ -279,6 +280,101 @@ def _stats(user: User, lang: str) -> None:
         rate=round(100 * busy / total) if total else 0, seats=seats))
 
 
+def free_table_number(user: User, lang: str, number: int) -> bool:
+    """تحرير طاولة برقمها — SPEC 5.6 و10.2. يعيد True إن تحرّرت فعلاً.
+
+    منفّذٌ واحد يلتقي عنده أمر السلاش والنص الحر وزر التأكيد، فلا يوجد
+    منطق إداري مكرّر في ثلاثة أمكنة يفترق بينها السلوك مع الوقت.
+
+    ولا تُخزَّن حالة في جدول الطاولات (SPEC 5.6 صراحةً): التحرير نقلُ
+    الحجز إلى completed، والموقع يقرأ الحجوزات لا الطاولات — فيتحدّث
+    من تلقائه في نفس اللحظة.
+    """
+    table = next((t for t in db.all_tables()
+                  if t["table_number"] == number), None)
+    if not table:
+        _reply(user, texts.t(lang, "admin_table_not_found", table=number))
+        return False
+    today = config.today_local().isoformat()
+    held = [r for r in db.reservations_on(today)
+            if r["table_id"] == table["id"]
+            and r["status"] in config.OCCUPYING_STATUSES]
+    if not held:
+        _reply(user, texts.t(lang, "admin_table_already_free", table=number))
+        return False
+    for res in held:
+        db.update_reservation(res["id"], status="completed")
+    _reply(user, texts.t(lang, "admin_table_freed", table=number))
+    return True
+
+
+def _remember_table(user: User, number) -> None:
+    """يحفظ آخر طاولة ذكرها الأدمن ليُحلّ بها ضمير «عدّلها»."""
+    state = db.get_user_state(user.platform, user.user_id) or {}
+    data = dict(state.get("data") or {})
+    data["_admin_table"] = number
+    db.save_user_state(user.platform, user.user_id, data=data)
+
+
+def handle_free_text(user: User, text: str, lang: str) -> bool:
+    """تعليمات الأدمن الحرة — SPEC 10.2. يعيد True إن استهلك الرسالة.
+
+    نقطة الفصل الوحيدة بين مسار الأدمن ومسار الزبون، وتسبق كل معالجة
+    أخرى للنص. من لم يكن أدمناً لا يدخلها أصلاً، ورسالةُ الأدمن التي
+    لا تحمل إشارة إدارية تخرج منها إلى مسار الزبون — فصاحب المطعم
+    يبقى قادراً على تصفّح بوته وحجز طاولة فيه.
+    """
+    if not db.is_admin(user.platform, user.user_id):
+        return False
+
+    state = db.get_user_state(user.platform, user.user_id) or {}
+    last = (state.get("data") or {}).get("_admin_table")
+    verdict = admin_nlu.understand(text, last_table=last)
+    if not verdict:
+        return False
+
+    action, value = verdict
+
+    if action == "free":
+        _remember_table(user, value)
+        free_table_number(user, lang, value)
+        return True
+
+    if action == "clarify_free":
+        # غامضة: نسأل بصفته أدمن، ولا نردّ عليه ردّ زبون.
+        _remember_table(user, value)
+        get_adapter(user.platform).send_buttons(
+            user, texts.t(lang, "admin_free_confirm", table=value),
+            [(texts.t(lang, "btn_admin_free_yes"), "A:t:%d" % value),
+             (texts.t(lang, "btn_admin_free_no"), "A:tx:0")])
+        return True
+
+    if action == "clarify_target":
+        _reply(user, texts.t(lang, "admin_which_table"))
+        return True
+
+    if action == "busy_unsupported":
+        _remember_table(user, value)
+        _reply(user, texts.t(lang, "admin_busy_hint", table=value))
+        return True
+
+    if action == "today":
+        _list_day(user, lang, config.today_local())
+        return True
+
+    if action == "stats":
+        _stats(user, lang)
+        return True
+
+    if action == "cancel":
+        return handle_command(user, "/cancel %s" % value, lang)
+
+    if action == "book":
+        return handle_command(user, "/book", lang)
+
+    return False
+
+
 def handle_command(user: User, text: str, lang: str) -> bool:
     """يعالج أوامر الأدمن. يعيد True إن استهلك الرسالة."""
     parts = text.split()
@@ -346,23 +442,7 @@ def handle_command(user: User, text: str, lang: str) -> bool:
         if not digits:
             _reply(user, texts.t(lang, "admin_usage", usage="/free 12"))
             return True
-        number = int(digits)
-        table = next((t for t in db.all_tables()
-                      if t["table_number"] == number), None)
-        if not table:
-            _reply(user, texts.t(lang, "admin_table_not_found", table=number))
-            return True
-        today = config.today_local().isoformat()
-        held = [r for r in db.reservations_on(today)
-                if r["table_id"] == table["id"]
-                and r["status"] in config.OCCUPYING_STATUSES]
-        if not held:
-            _reply(user, texts.t(lang, "admin_table_already_free",
-                                 table=number))
-            return True
-        for r in held:
-            db.update_reservation(r["id"], status="completed")
-        _reply(user, texts.t(lang, "admin_table_freed", table=number))
+        free_table_number(user, lang, int(digits))
         return True
 
     if cmd == "/book":

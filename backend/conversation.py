@@ -521,9 +521,18 @@ def _handle_admin_callback(adapter, user, lang, parts) -> None:
         adapter.send_text(user, texts.t(lang, "admin_only"))
         return None
     try:
-        action, res_id = parts[1], int(parts[2])
+        action, value = parts[1], int(parts[2])
     except (IndexError, ValueError):
         return None
+
+    # «t» رقم طاولة لا رقم حجز — تأكيد تحرير جاء من تعليمة حرة غامضة.
+    if action == "t":
+        admin.free_table_number(user, lang, value)
+        return None
+    if action == "tx":
+        adapter.send_text(user, texts.t(lang, "admin_free_cancelled"))
+        return None
+    res_id = value
 
     who = (db.get_user_state(user.platform, user.user_id) or {}).get(
         "data", {}).get("name") or user.user_id
@@ -800,6 +809,14 @@ def handle_text(user: User, text: str, lang) -> None:
 
     if stripped in ("/start", "/menu", "start"):
         _screen_main(adapter, user, lang, greeting=stripped != "/menu")
+        return None
+
+    # SPEC 10.2 — مسار الأدمن يسبق مسار الزبون عند كل نقطة استلام، لا
+    # عند أوامر السلاش وحدها. كانت صلاحية الأدمن تعيش لحظة الأمر فقط،
+    # فترتدّ تعليماته الحرة رسائلَ تسويقية للزبائن.
+    # ومن لا يحمل رسالتُه إشارةً إدارية يخرج إلى مسار الزبون: صاحب
+    # المطعم يجرّب بوته زبوناً، فالفصل بالمحتوى لا بالهوية.
+    if admin.handle_free_text(user, stripped, lang):
         return None
 
     # الحالة المعلّقة تُقيَّم قبل أن تُفرض: رسالةٌ لا تخصّ الحقل المنتظر
