@@ -96,7 +96,9 @@ def main() -> int:                                    # noqa: C901
             ("الطاولة 12 راحوا", ("free", 12)),
             ("table 7 is free", ("free", 7)),
             ("الطاولة 33", ("clarify_free", 33)),
-            ("الطاولة 12 محجوزة", ("busy_unsupported", 12)),
+            ("الطاولة 12 محجوزة", ("block", (12, None, None))),
+            ("الطاولة 5 محجوزة الساعة 8", ("block", (5, 20, None))),
+            ("table 6 is reserved at 7", ("block", (6, 19, None))),
             ("شو حجوزات اليوم", ("today", None)),
             ("كم الاشغال اليوم", ("stats", None)),
             ("احجز لأحمد بكرا", ("book", None)),
@@ -257,6 +259,125 @@ def main() -> int:                                    # noqa: C901
     conversation.handle_callback(guest, "A:t:%d" % number, "ar")
     check(db.get_reservation(row["id"])["status"] == "confirmed",
           "زبون يضغط زر الأدمن لا يحرّر شيئاً")
+
+    # -------------------------- 6ب) الحجز الإداري — SPEC 10.2.1
+    print("\n6ب) الحجز الإداري للطاولة: الوقت وحده، بلا اسم ولا هاتف")
+
+    # لا يُطلب اسم ولا هاتف في أي من الحالتين — هذا هو جوهر الفحص.
+    asks_identity = (texts.t("ar", "ask_name"), texts.t("ar", "ask_phone"),
+                     texts.t("en", "ask_name"), texts.t("en", "ask_phone"))
+
+    def free_table_now(num):
+        """يعيد الطاولة متاحة قبل كل سيناريو."""
+        tbl = next(t for t in db.all_tables() if t["table_number"] == num)
+        for r in db.reservations_on(config.today_local().isoformat()):
+            if r["table_id"] == tbl["id"]:
+                c.table("reservations").delete().eq("id", r["id"]).execute()
+        return tbl
+
+    # --- كل المعلومات بجملة واحدة: تنفيذ فوري بلا أي سؤال
+    cleanup()
+    target = free_table_now(number)
+    msgs = say(boss, "الطاولة %d محجوزة الساعة 8" % number)
+    reply = blob(msgs)
+    check(len(msgs) == 1, "رسالة واحدة فقط — لا سؤال إضافي (%d)" % len(msgs))
+    check(texts.t("ar", "admin_table_blocked", table=number,
+                  date=admin._fmt_day(config.today_local(), "ar"),
+                  time="8:00") in reply,
+          "التأكيد: «%s»" % reply[:70])
+    check(not any(q in reply for q in asks_identity),
+          "لم يُطلب اسم ولا رقم هاتف")
+
+    held = [r for r in db.reservations_on(config.today_local().isoformat())
+            if r["table_id"] == target["id"]]
+    check(len(held) == 1, "أُنشئ حجز واحد في القاعدة")
+    row = held[0]
+    check(row["status"] == "confirmed", "بحالة confirmed")
+    check(row["platform"] == admin.BLOCK_PLATFORM
+          and row["user_id"] == admin.BLOCK_USER,
+          "على منصّة الأدمن لا على منصّة زبون")
+    check(row["customer_name"] == texts.t("ar", "admin_block_name")
+          and row["customer_phone"] == "—",
+          "بلا اسم زبون ولا هاتف: %s / %s"
+          % (row["customer_name"], row["customer_phone"]))
+    check(row["party_size"] == target["capacity"],
+          "العدد = سعة الطاولة (%d)" % row["party_size"])
+    check(config.to_local(
+        __import__("datetime").datetime.fromisoformat(
+            row["reservation_at"])).hour == 20,
+        "الساعة 8 مساءً كما ذُكرت في الجملة")
+    check(target["id"] in db.booked_table_ids(
+        config.today_local().isoformat()),
+        "والطاولة اختفت من المتاحة — نفس استعلام الموقع")
+
+    # لا تظهر في «حجوزاتي» لأحد ولا تلتقطها الجدولة
+    check(not db.upcoming_for_user("telegram", ADMIN_UID,
+                                   config.today_local().isoformat()),
+          "لا تظهر في «حجوزاتي» للأدمن")
+    import platform_adapter as _pa
+    check(admin.BLOCK_PLATFORM not in _pa.ADAPTERS,
+          "ومنصّتها بلا محوّل، فالجدولة تتخطّاها")
+
+    # --- بلا وقت: سؤال واحد عن الساعة، ثم تنفيذ
+    cleanup()
+    target = free_table_now(number)
+    msgs = say(boss, "الطاولة %d محجوزة" % number)
+    reply = blob(msgs)
+    check(texts.t("ar", "admin_ask_block_hour") in reply,
+          "سُئل عن الساعة: «%s»" % reply[:50])
+    check(not any(q in reply for q in asks_identity),
+          "ولم يُطلب اسم ولا رقم هاتف")
+    check(len(msgs) == 1, "سؤال واحد لا أكثر")
+    check(not db.booked_table_ids(config.today_local().isoformat())
+          .intersection({target["id"]}),
+          "ولم يُنشأ حجز بعد")
+
+    # الرقم المجرّد جوابٌ عن السؤال
+    msgs = say(boss, "8")
+    reply = blob(msgs)
+    check(texts.t("ar", "admin_table_blocked", table=number,
+                  date=admin._fmt_day(config.today_local(), "ar"),
+                  time="8:00") in reply,
+          "«8» وحدها نُفِّذت ساعةً: «%s»" % reply[:70])
+    check(not any(q in reply for q in asks_identity),
+          "ولا اسم ولا هاتف في هذه المرحلة أيضاً")
+    check(target["id"] in db.booked_table_ids(
+        config.today_local().isoformat()), "والطاولة صارت محجوزة")
+
+    # --- التناظر: نفس الطاولة تُحرَّر بالأمر العادي
+    msgs = say(boss, "الطاولة %d متاحة" % number)
+    check(texts.t("ar", "admin_table_freed", table=number) in blob(msgs),
+          "والحجز الإداري يُحرَّر بنفس أمر التحرير")
+    check(target["id"] not in db.booked_table_ids(
+        config.today_local().isoformat()), "فتعود متاحة")
+
+    # --- جواب غير صالح عن سؤال الساعة
+    cleanup()
+    free_table_now(number)
+    say(boss, "الطاولة %d محجوزة" % number)
+    msgs = say(boss, "مرحبا كيفك")
+    check(texts.t("ar", "admin_block_bad_hour") in blob(msgs),
+          "جواب ليس ساعةً -> يُعاد السؤال، بلا تشبّث أعمى")
+
+    # --- طاولة عليها حجز أصلاً
+    cleanup()
+    target = free_table_now(number)
+    say(boss, "الطاولة %d محجوزة الساعة 7" % number)
+    msgs = say(boss, "الطاولة %d محجوزة الساعة 9" % number)
+    check(texts.t("ar", "admin_table_taken", table=number,
+                  date=admin._fmt_day(config.today_local(), "ar"))
+          in blob(msgs), "طاولة محجوزة أصلاً لا تُحجز مرتين")
+    free_table_now(number)
+
+    # --- والزبون العادي لا يستطيع حجز طاولة إدارياً
+    cleanup()
+    target = free_table_now(number)
+    msgs = say(guest, "الطاولة %d محجوزة الساعة 8" % number)
+    check(target["id"] not in db.booked_table_ids(
+        config.today_local().isoformat()),
+        "زبون يقول «الطاولة محجوزة» لا يحجز شيئاً")
+    check(texts.t("ar", "admin_ask_block_hour") not in blob(msgs),
+          "ولا يُسأل سؤال الأدمن")
 
     # ------------------------------------------- 7) نبرة الأسئلة
     print("\n7) دفء نبرة أسئلة بداية الحجز")

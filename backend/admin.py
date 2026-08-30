@@ -11,6 +11,7 @@ import booking
 import admin_nlu
 import config
 import db
+import slots
 import telegram_api
 import texts
 from platform_adapter import User, get as get_adapter
@@ -308,12 +309,82 @@ def free_table_number(user: User, lang: str, number: int) -> bool:
     return True
 
 
+ST_BLOCK_HOUR = "adm_block_hour"
+
+# منصّة الحجز الإداري ليست منصّة زبون، وهذا هو المقصود: لا صاحب له
+# يُشعَر، فلا يظهر في «حجوزاتي» لأحد، ولا تلتقطه الجدولة (تتخطّى كل
+# منصّة لا محوّل لها) فلا تلاحقه تذكيرات ولا أسئلة حضور ولا إلغاء
+# تلقائي. أما التوفّر فيقرأ الحالة والتاريخ فقط، فيحجب الطاولة كما
+# يحجبها أي حجز.
+BLOCK_PLATFORM = "admin"
+BLOCK_USER = "block"
+
+
+def block_table(user: User, lang: str, number: int, hour: int,
+                day: Date | None = None) -> bool:
+    """حجز إداري لطاولة — SPEC 10.2.1. بلا اسم ولا هاتف."""
+    table = next((t for t in db.all_tables()
+                  if t["table_number"] == number), None)
+    if not table:
+        _reply(user, texts.t(lang, "admin_table_not_found", table=number))
+        return False
+
+    day = day or config.today_local()
+    taken = [r for r in db.reservations_on(day.isoformat())
+             if r["table_id"] == table["id"]
+             and r["status"] in config.OCCUPYING_STATUSES]
+    if taken:
+        _reply(user, texts.t(lang, "admin_table_taken", table=number,
+                             date=_fmt_day(day, lang)))
+        return False
+
+    when = booking.local_datetime(day, hour)
+    row = db.client().table("reservations").insert({
+        "code": booking._code(),
+        "platform": BLOCK_PLATFORM, "user_id": BLOCK_USER,
+        # الاسم علامةٌ يميّزها صاحب المطعم بنظرة في /today واللوحة،
+        # والهاتف شرطة لأنه لا هاتف أصلاً — لا زبون هنا.
+        "customer_name": texts.t(lang, "admin_block_name"),
+        "customer_phone": "—",
+        "party_size": table["capacity"],
+        "booking_type": "family", "table_id": table["id"],
+        "reservation_date": day.isoformat(),
+        "reservation_at": config.to_utc(when).isoformat(),
+        "status": "confirmed", "language": lang,
+    }).execute().data[0]
+    _reply(user, texts.t(lang, "admin_table_blocked", table=number,
+                         date=_fmt_day(day, lang), time=_fmt_time(row)))
+    return True
+
+
+def _fmt_day(day: Date, lang: str) -> str:
+    names = texts.t(lang, "weekdays").split(",")
+    return "%s %d/%d" % (names[day.weekday()], day.day, day.month)
+
+
 def _remember_table(user: User, number) -> None:
     """يحفظ آخر طاولة ذكرها الأدمن ليُحلّ بها ضمير «عدّلها»."""
     state = db.get_user_state(user.platform, user.user_id) or {}
     data = dict(state.get("data") or {})
     data["_admin_table"] = number
     db.save_user_state(user.platform, user.user_id, data=data)
+
+
+def _pending_block(user: User, number: int, day) -> None:
+    state = db.get_user_state(user.platform, user.user_id) or {}
+    data = dict(state.get("data") or {})
+    data["_block_table"] = number
+    data["_block_date"] = day
+    db.save_user_state(user.platform, user.user_id,
+                       state=ST_BLOCK_HOUR, data=data)
+
+
+def _clear_pending_block(user: User) -> None:
+    state = db.get_user_state(user.platform, user.user_id) or {}
+    data = dict(state.get("data") or {})
+    data.pop("_block_table", None)
+    data.pop("_block_date", None)
+    db.save_user_state(user.platform, user.user_id, state="main", data=data)
 
 
 def handle_free_text(user: User, text: str, lang: str) -> bool:
@@ -328,7 +399,25 @@ def handle_free_text(user: User, text: str, lang: str) -> bool:
         return False
 
     state = db.get_user_state(user.platform, user.user_id) or {}
-    last = (state.get("data") or {}).get("_admin_table")
+    data = state.get("data") or {}
+
+    # سؤال الساعة معلّق: الرقم المجرّد جوابٌ عنه، والسؤال هو مرساته.
+    if state.get("state") == ST_BLOCK_HOUR and data.get("_block_table"):
+        hour = slots.hour_from(text)
+        if hour:
+            day = data.get("_block_date")
+            _clear_pending_block(user)
+            block_table(user, lang, int(data["_block_table"]), hour,
+                        Date.fromisoformat(day) if day else None)
+            return True
+        # ليس ساعة: إن كان أمراً إدارياً آخر نتركه يُقرأ من جديد،
+        # وإلا نعيد السؤال بلا أن نتشبّث بالحالة عمياً.
+        if admin_nlu.understand(text) is None:
+            _reply(user, texts.t(lang, "admin_block_bad_hour"))
+            return True
+        _clear_pending_block(user)
+
+    last = data.get("_admin_table")
     verdict = admin_nlu.understand(text, last_table=last)
     if not verdict:
         return False
@@ -353,9 +442,16 @@ def handle_free_text(user: User, text: str, lang: str) -> bool:
         _reply(user, texts.t(lang, "admin_which_table"))
         return True
 
-    if action == "busy_unsupported":
-        _remember_table(user, value)
-        _reply(user, texts.t(lang, "admin_busy_hint", table=value))
+    if action == "block":
+        number, hour, day = value
+        _remember_table(user, number)
+        when = Date.fromisoformat(day) if day else None
+        if hour:
+            block_table(user, lang, number, hour, when)
+            return True
+        # الوقت الحقل الوحيد الناقص: سؤال واحد، ولا شيء غيره.
+        _pending_block(user, number, day)
+        _reply(user, texts.t(lang, "admin_ask_block_hour"))
         return True
 
     if action == "today":

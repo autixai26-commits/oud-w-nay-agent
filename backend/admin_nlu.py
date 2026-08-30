@@ -104,8 +104,10 @@ def understand(text: str, last_table=None):
         if _has(body, _FREE):
             return ("free", number)
         if _has(body, _BUSY):
-            # لا يوجد «اجعلها محجوزة» في SPEC 10.2 — الطاولة تُشغَل بحجز.
-            return ("busy_unsupported", number)
+            # SPEC 10.2.1 — حجز إداري: الوقت وحده مطلوب، ويُقرأ من الجملة
+            # نفسها إن ذُكر فيها. لا اسم ولا هاتف، فليس حجز زبون.
+            found = slots.extract(text)
+            return ("block", (number, found.get("hour"), found.get("date")))
         # رقم طاولة بلا فعل واضح: إشارة إدارية غامضة لا رسالة زبون.
         return ("clarify_free", number)
 

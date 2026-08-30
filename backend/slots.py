@@ -338,3 +338,19 @@ _GREETING_RE = re.compile(
 def is_greeting(text: str) -> bool:
     """هل تحمل الرسالة تحيةً استهلالية؟"""
     return bool(_GREETING_RE.search(normalize(text)))
+
+
+def hour_from(text: str):
+    """ساعة من رسالة قد تكون رقماً مجرّداً.
+
+    تُستعمل حيث سُئل عن الساعة وحدها: الرقم المجرّد لا يملأ ساعةً في
+    الاستخراج العام لأنه بلا مرساة، لكنه هنا جوابٌ عن سؤال صريح —
+    والسؤال هو المرساة.
+    """
+    found = extract(text)
+    if found.get("hour"):
+        return found["hour"]
+    digits = digits_only(text)
+    if digits and len(digits) <= 2:
+        return _to_evening(int(digits))
+    return None
