@@ -86,8 +86,13 @@ def _num(token: str):
 
 
 # ----------------------------------------------------------- الساعة
+# «على 7» مرساةُ وقت شائعة في الأردن كـ«الساعة 7». لكن «على» حرفٌ
+# كثير الورود، فيُشترط أن يليه رقم لا يتبعه اسمُ أشخاص: «على 4 أشخاص»
+# عددٌ لا وقت، ولو قُرئت وقتاً لابتُلع الرقم ولضاع العدد معه.
+_NOT_PEOPLE = r"(?!\s*(?:اشخاص|شخص|نفر|نفرات|افراد|فرد|ناس|people|persons))"
 _HOUR_ANCHORED = re.compile(
-    r"(?:الساعه|ساعه|السا?عه|at|@)\s*" + _ANY_NUM)
+    r"(?:الساعه|ساعه|السا?عه|at|@)\s*" + _ANY_NUM
+    + r"|(?:^|\s)" + _n("على") + r"\s*" + _ANY_NUM + _NOT_PEOPLE)
 # لاحقة الفترة تصلح مرساةً وحدها: «4 العصر» أو «8 pm».
 _HOUR_SUFFIX = re.compile(
     _ANY_NUM + r"\s*(?:pm|p\.m\.?|am|a\.m\.?|"
@@ -130,7 +135,8 @@ def _hour(text: str):
         # اللاحقة. يُعاد المدى مع None ليُمحى الرقم فلا يُقرأ عدد أشخاص.
         if morning:
             return None, match.span()
-        return _to_evening(_num(match.group(1))), match.span()
+        token = next((g for g in match.groups() if g), None)
+        return _to_evening(_num(token)), match.span()
     return None, None
 
 

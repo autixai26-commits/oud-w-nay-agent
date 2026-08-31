@@ -97,6 +97,10 @@ def main() -> int:                                    # noqa: C901
             ("table 7 is free", ("free", 7)),
             ("الطاولة 33", ("clarify_free", 33)),
             ("الطاولة 12 محجوزة", ("block", (12, None, None))),
+            # فعل الحجز الصريح يحسم الاتجاه: لا غموض بين حجز وتحرير
+            ("احجزلي طاولة 20", ("block", (20, None, None))),
+            ("احجز طاولة 5 الساعة 8", ("block", (5, 20, None))),
+            ("ثبت طاولة 9", ("block", (9, None, None))),
             ("الطاولة 5 محجوزة الساعة 8", ("block", (5, 20, None))),
             ("table 6 is reserved at 7", ("block", (6, 19, None))),
             ("شو حجوزات اليوم", ("today", None)),
@@ -272,6 +276,9 @@ def main() -> int:                                    # noqa: C901
         tbl = next(t for t in db.all_tables() if t["table_number"] == num)
         for r in db.reservations_on(config.today_local().isoformat()):
             if r["table_id"] == tbl["id"]:
+                # ترتيب إلزامي: الجلسات تشير إلى الحجوزات بمفتاح أجنبي.
+                c.table("booking_sessions").delete().eq(
+                    "reservation_id", r["id"]).execute()
                 c.table("reservations").delete().eq("id", r["id"]).execute()
         return tbl
 
@@ -378,6 +385,116 @@ def main() -> int:                                    # noqa: C901
         "زبون يقول «الطاولة محجوزة» لا يحجز شيئاً")
     check(texts.t("ar", "admin_ask_block_hour") not in blob(msgs),
           "ولا يُسأل سؤال الأدمن")
+
+    # ------------------- 6ج) سياق المحادثة الإدارية (من محادثة فعلية)
+    print("\n6ج) سياق المحادثة: التصحيح والوراثة")
+
+    def free_now(num):
+        tbl = next(t for t in db.all_tables() if t["table_number"] == num)
+        for r in db.reservations_on(config.today_local().isoformat()):
+            if r["table_id"] == tbl["id"]:
+                # ترتيب إلزامي: الجلسات تشير إلى الحجوزات بمفتاح أجنبي.
+                c.table("booking_sessions").delete().eq(
+                    "reservation_id", r["id"]).execute()
+                c.table("reservations").delete().eq("id", r["id"]).execute()
+        return tbl
+
+    # --- «احجزلي طاولة 20»: حجز مباشر لا سؤال غامض عن التحرير
+    cleanup()
+    target = free_now(number)
+    msgs = say(boss, "احجزلي طاولة %d" % number)
+    reply = blob(msgs)
+    check(texts.t("ar", "admin_ask_block_hour") in reply,
+          "«احجزلي طاولة %d» -> سؤال الساعة مباشرة" % number)
+    check(texts.t("ar", "admin_free_confirm", table=number) not in reply,
+          "ولا سؤال «قصدك تحدّث الحالة لمتاحة؟»")
+
+    # --- التصحيح بعد سؤال توضيحي يحتفظ برقم الطاولة
+    cleanup()
+    target = free_now(number)
+    msgs = say(boss, "الطاولة %d" % number)
+    check(texts.t("ar", "admin_free_confirm", table=number) in blob(msgs),
+          "سؤال توضيحي على الطاولة %d" % number)
+
+    msgs = say(boss, "لا احجزها")
+    reply = blob(msgs)
+    check(texts.t("ar", "admin_ask_block_hour") in reply,
+          "«لا احجزها» صُحّحت إلى حجز: «%s»" % reply[:50])
+    check(texts.t("ar", "ask_date") not in reply
+          and texts.t("ar", "ask_booking_type") not in reply,
+          "ولم يبدأ تدفق زبون من الصفر")
+
+    msgs = say(boss, "8")
+    check(texts.t("ar", "admin_table_blocked", table=number,
+                  date=admin._fmt_day(config.today_local(), "ar"),
+                  time="8:00") in blob(msgs),
+          "ورقم الطاولة %d بقي محفوظاً عبر التصحيح" % number)
+    check(target["id"] in db.booked_table_ids(
+        config.today_local().isoformat()), "فحُجزت فعلاً")
+
+    # --- الإيجاب النصي يعمل كزر «نعم»
+    cleanup()
+    target = free_now(number)
+    say(boss, "الطاولة %d" % number)
+    msgs = say(boss, "اه")
+    check(texts.t("ar", "admin_table_already_free", table=number)
+          in blob(msgs) or texts.t("ar", "admin_table_freed", table=number)
+          in blob(msgs), "«اه» جوابٌ عن السؤال لا تحيّةُ زبون")
+    check(texts.t("ar", "greeting_back") not in blob(msgs)
+          if texts.t("ar", "greeting_back") else True,
+          "ولا ردّ ترحيبي")
+
+    # --- والنفي المجرّد لا يغيّر شيئاً
+    cleanup()
+    free_now(number)
+    say(boss, "الطاولة %d" % number)
+    msgs = say(boss, "لأ")
+    check(texts.t("ar", "admin_free_cancelled") in blob(msgs),
+          "«لأ» تُلغي الاقتراح")
+
+    # --- أمر جديد وسط سؤال معلّق لا يُقرأ جواباً عنه
+    cleanup()
+    other = next(t for t in db.all_tables()
+                 if t["table_number"] != number and t["hall"] == "outdoor")
+    free_now(number)
+    free_now(other["table_number"])
+    say(boss, "الطاولة %d" % number)
+    msgs = say(boss, "الطاولة %d متاحة" % other["table_number"])
+    check(texts.t("ar", "admin_table_already_free",
+                  table=other["table_number"]) in blob(msgs)
+          or texts.t("ar", "admin_table_freed",
+                     table=other["table_number"]) in blob(msgs),
+          "رسالة فيها رقم طاولة أمرٌ جديد لا جواب عن سؤال معلّق")
+
+    # --- وراثة فعل الأمر السابق: «وطاولة X كمان»
+    print("\n   وراثة الفعل السابق")
+    for last, phrase, expect in [
+            ("free", "وطاولة 36 كمان", ("free", 36)),
+            ("block", "وطاولة 36 كمان", ("block", (36, None, None))),
+            (None, "وطاولة 36 كمان", ("clarify_free", 36))]:
+        got = admin_nlu.understand(phrase, last_action=last)
+        check(got == expect, "آخر فعل %-5s -> %s" % (last, got))
+
+    cleanup()
+    target = free_now(number)
+    other_t = free_now(other["table_number"])
+    # نحجز الاثنتين ثم نحرّر الأولى بالأمر والثانية بالوراثة
+    say(boss, "الطاولة %d محجوزة الساعة 7" % number)
+    say(boss, "الطاولة %d محجوزة الساعة 7" % other["table_number"])
+    say(boss, "الطاولة %d متاحة" % number)
+    msgs = say(boss, "وطاولة %d كمان" % other["table_number"])
+    reply = blob(msgs)
+    check(texts.t("ar", "admin_table_freed",
+                  table=other["table_number"]) in reply,
+          "«وطاولة %d كمان» ورثت التحرير ونُفِّذت مباشرة"
+          % other["table_number"])
+    check(texts.t("ar", "admin_free_confirm",
+                  table=other["table_number"]) not in reply,
+          "بلا سؤال توضيحي")
+    check(other_t["id"] not in db.booked_table_ids(
+        config.today_local().isoformat()), "والطاولة تحرّرت فعلاً")
+    free_now(number)
+    free_now(other["table_number"])
 
     # ------------------------------------------- 7) نبرة الأسئلة
     print("\n7) دفء نبرة أسئلة بداية الحجز")

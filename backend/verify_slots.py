@@ -111,6 +111,11 @@ def main() -> int:                                    # noqa: C901
         ("٣ اشخاص بكره الساعه ٨",
          {"party": 3, "date": tomorrow.isoformat(), "hour": 20}),
         ("طاولة لتسعة بكرا", {"party": 9, "date": tomorrow.isoformat()}),
+        # «على 7» مرساةُ وقت أردنية شائعة كـ«الساعة 7»
+        ("بدي احجز طاولة لعائلة اليوم على 7",
+         {"hour": 19, "date": today.isoformat(), "type": "family"}),
+        ("اليوم على 9 لأربعة",
+         {"hour": 21, "party": 4, "date": today.isoformat()}),
     ]
     for phrase, want in cases:
         got = slots.extract(phrase)
@@ -132,6 +137,16 @@ def main() -> int:                                    # noqa: C901
           "«9 الصبح» خارج الدوام فلا تُملأ")
     check("hour" not in slots.extract("الساعة 12"),
           "«الساعة 12» قبل الافتتاح فلا تُملأ")
+
+    # «على» حرفٌ كثير الورود، فلا يصير مرساةً إلا أمام رقم لا يتبعه
+    # اسمُ أشخاص — وإلا ابتلع العددَ وضاع.
+    got = slots.extract("بدي احجز على 4 اشخاص الساعة 9")
+    check(got.get("party") == 4 and got.get("hour") == 21,
+          "«على 4 اشخاص» عددٌ لا وقت (%s)" % got)
+    check(not slots.extract("عندكم خصم على الفاتورة"),
+          "«على» بلا رقم لا تلتقط شيئاً")
+    check("hour" not in slots.extract("على طول بنوصل"),
+          "«على طول» ليست وقتاً")
 
     # ------------------------------------------------ 2) المجموعة السلبية
     print("\n2) رسائل يجب ألا تفتح تدفق حجز (أقل من حقلين)")

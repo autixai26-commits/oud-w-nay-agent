@@ -32,8 +32,9 @@ _TABLE = re.compile(r"(?:طاول\w*|طول\w*|table)\s*(?:رقم\s*)?(\d{1,2})"
 _BARE_NUMBER = re.compile(r"(?:^|\s)رقم\s*(\d{1,2})(?:\s|$)")
 
 _FREE = ("متاحه", "متاح", "متاحات", "فاضيه", "فاضي", "فضيت", "فضت",
-         "فضيوا", "خلصت", "خلص", "خلصوا", "طلعوا", "راحوا", "مشيوا",
-         "حرر", "حررها", "فرغ", "فرغت", "قامو", "قاموا",
+         "فضيوا", "فضيها", "فضيهم", "خلصت", "خلص", "خلصوا", "طلعوا",
+         "راحوا", "مشيوا", "حرر", "حررها", "حررهم", "فرغ", "فرغت",
+         "فرغها", "قامو", "قاموا", "الغ الحجز",
          "free", "freed", "empty", "available", "left", "done")
 
 _BUSY = ("محجوزه", "محجوز", "مشغوله", "مشغول", "معموره",
@@ -59,6 +60,20 @@ _WANTS = re.compile(
     r"\b(?:بدي|بدنا|بدها|بدهم|ابغى|اريد|عايز|ودي|wanna|i want|i'd like)\b")
 
 # رمز الحجز ستّ خانات، وقد تفصله كلمة عن الفعل: «الغِ الحجز ABC123».
+# فعل الحجز الصريح يحسم الاتجاه بلا غموض: «احجزلي طاولة 20» أمرُ حجز
+# لا سؤالٌ عن التحرير. ورقم الطاولة نفسه علامةٌ إدارية — الزبون لا
+# يختار طاولةً برقمها في المحادثة أصلاً، بل على الخريطة.
+_BOOK_VERB = ("احجز", "احجزلي", "احجزها", "احجزهم", "احجزي", "ثبت",
+              "ثبتها", "احجزلنا", "book", "reserve", "hold", "block")
+
+# «وطاولة 36 كمان» ترث فعل آخر أمر نُفِّذ في هذه المحادثة.
+_CONTINUE = ("كمان", "وكذلك", "كذلك", "زيها", "مثلها", "برضو", "بردو",
+             "ايضا", "also", "too", "as well", "same")
+
+_YES = ("اه", "ايه", "اي", "نعم", "تمام", "اكيد", "صح", "yes", "yep",
+        "yeah", "ok", "okay", "sure")
+_NO = ("لا", "no", "nope", "مش هيك")
+
 _CANCEL_CODE = re.compile(
     r"(?:الغ\w*|احذف|شيل|cancel)\b[\s\S]{0,14}?\b([a-z0-9]{6})\b")
 
@@ -68,17 +83,26 @@ def _has(body: str, words) -> bool:
     return any(re.search(r"\b" + re.escape(w) + r"\b", body) for w in words)
 
 
+def table_number(text: str):
+    """رقم الطاولة في الرسالة، أو None — يُستعمل لتمييز أمر جديد عن جواب."""
+    return _table_number(slots.normalize(text))
+
+
 def _table_number(body: str):
     match = _TABLE.search(body) or _BARE_NUMBER.search(body)
     return int(match.group(1)) if match else None
 
 
-def understand(text: str, last_table=None):
+def understand(text: str, last_table=None, last_action=None):
     """يعيد (وجهة، معطى) أو None حين لا إشارة إدارية إطلاقاً.
 
     ``last_table`` رقم الطاولة الذي ذكره هذا الأدمن آخر مرة، فيحلّ
     ضمير «عدّلها» — الرسالة التي تلي «الطاولة 33 متاحة» تعني الطاولة
     نفسها، وهو ما يفعله أي إنسان في المحادثة.
+
+    ``last_action`` فعلُ آخر أمر نُفِّذ، ترثه رسالةُ متابعة مثل «وطاولة
+    36 كمان»: كلمة الاستمرار تحيل على الفعل السابق كما يحيل الضمير على
+    الاسم السابق.
     """
     body = slots.normalize(text)
     if not body.strip():
@@ -101,14 +125,23 @@ def understand(text: str, last_table=None):
         return ("stats", None)
 
     if number is not None:
+        found = slots.extract(text)
+        booked = _has(body, _BOOK_VERB) or _has(body, _BUSY)
+
+        # SPEC 10.2.1 — حجز إداري: الوقت وحده مطلوب، ويُقرأ من الجملة
+        # نفسها إن ذُكر فيها. لا اسم ولا هاتف، فليس حجز زبون.
+        if booked:
+            return ("block", (number, found.get("hour"), found.get("date")))
         if _has(body, _FREE):
             return ("free", number)
-        if _has(body, _BUSY):
-            # SPEC 10.2.1 — حجز إداري: الوقت وحده مطلوب، ويُقرأ من الجملة
-            # نفسها إن ذُكر فيها. لا اسم ولا هاتف، فليس حجز زبون.
-            found = slots.extract(text)
+
+        # لا فعل: ترث الرسالةُ فعلَ آخر أمر نُفِّذ إن أعلنت الاستمرار.
+        if _has(body, _CONTINUE) and last_action in ("free", "block"):
+            if last_action == "free":
+                return ("free", number)
             return ("block", (number, found.get("hour"), found.get("date")))
-        # رقم طاولة بلا فعل واضح: إشارة إدارية غامضة لا رسالة زبون.
+
+        # رقم طاولة بلا فعل ولا استمرار: غامضة لا رسالة زبون.
         return ("clarify_free", number)
 
     # ضمير التعديل بلا رقم: يُحلّ بآخر طاولة ذكرها هذا الأدمن.
@@ -118,4 +151,25 @@ def understand(text: str, last_table=None):
         return ("clarify_target", None)
 
     # لا إشارة إدارية: رسالة زبون عادية من صاحب المطعم.
+    return None
+
+
+def answer_to_clarify(text: str):
+    """يقرأ جواب الأدمن على سؤال توضيحي: 'free' أو 'block' أو 'yes'/'no'.
+
+    الفعل الصريح يسبق الإيجاب والنفي: «لا احجزها» نفيٌ للاقتراح وأمرٌ
+    بالعكس معاً، ومعناها الحقيقي في الفعل لا في «لا». من قرأ «لا» وحدها
+    خسر التصحيح كلّه.
+    """
+    body = slots.normalize(text)
+    if not body.strip():
+        return None
+    if _has(body, _BOOK_VERB) or _has(body, _BUSY):
+        return "block"
+    if _has(body, _FREE):
+        return "free"
+    if _has(body, _YES):
+        return "yes"
+    if _has(body, _NO):
+        return "no"
     return None

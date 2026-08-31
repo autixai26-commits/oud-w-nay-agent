@@ -291,6 +291,7 @@ def free_table_number(user: User, lang: str, number: int) -> bool:
     الحجز إلى completed، والموقع يقرأ الحجوزات لا الطاولات — فيتحدّث
     من تلقائه في نفس اللحظة.
     """
+    _note_action(user, "free", number)
     table = next((t for t in db.all_tables()
                   if t["table_number"] == number), None)
     if not table:
@@ -310,6 +311,7 @@ def free_table_number(user: User, lang: str, number: int) -> bool:
 
 
 ST_BLOCK_HOUR = "adm_block_hour"
+ST_CLARIFY = "adm_clarify"
 
 # منصّة الحجز الإداري ليست منصّة زبون، وهذا هو المقصود: لا صاحب له
 # يُشعَر، فلا يظهر في «حجوزاتي» لأحد، ولا تلتقطه الجدولة (تتخطّى كل
@@ -323,6 +325,7 @@ BLOCK_USER = "block"
 def block_table(user: User, lang: str, number: int, hour: int,
                 day: Date | None = None) -> bool:
     """حجز إداري لطاولة — SPEC 10.2.1. بلا اسم ولا هاتف."""
+    _note_action(user, "block", number)
     table = next((t for t in db.all_tables()
                   if t["table_number"] == number), None)
     if not table:
@@ -362,29 +365,45 @@ def _fmt_day(day: Date, lang: str) -> str:
     return "%s %d/%d" % (names[day.weekday()], day.day, day.month)
 
 
+def _admin_data(user: User) -> tuple:
+    state = db.get_user_state(user.platform, user.user_id) or {}
+    return state.get("state") or "", dict(state.get("data") or {})
+
+
+def _set_admin(user: User, state: str, **fields) -> None:
+    """يكتب حالة الأدمن وحقول سياقه؛ القيمة None تحذف الحقل."""
+    _, data = _admin_data(user)
+    for key, value in fields.items():
+        if value is None:
+            data.pop(key, None)
+        else:
+            data[key] = value
+    db.save_user_state(user.platform, user.user_id, state=state, data=data)
+
+
+def _note_action(user: User, action: str, number: int) -> None:
+    """يسجّل آخر فعل إداري نُفِّذ وطاولته، ويطوي أي سؤال معلّق.
+
+    الفعل يُسجَّل عند الشروع لا عند النجاح: «الطاولة 30 متاحة» وهي
+    متاحة أصلاً تبقى إعلانَ نيّة تحرير، فترثها «وطاولة 36 كمان» صحيحةً.
+    """
+    _set_admin(user, "main", _admin_table=number, _last_action=action,
+               _block_table=None, _block_date=None, _clarify_table=None)
+
+
 def _remember_table(user: User, number) -> None:
     """يحفظ آخر طاولة ذكرها الأدمن ليُحلّ بها ضمير «عدّلها»."""
-    state = db.get_user_state(user.platform, user.user_id) or {}
-    data = dict(state.get("data") or {})
-    data["_admin_table"] = number
-    db.save_user_state(user.platform, user.user_id, data=data)
+    state, _ = _admin_data(user)
+    _set_admin(user, state or "main", _admin_table=number)
 
 
 def _pending_block(user: User, number: int, day) -> None:
-    state = db.get_user_state(user.platform, user.user_id) or {}
-    data = dict(state.get("data") or {})
-    data["_block_table"] = number
-    data["_block_date"] = day
-    db.save_user_state(user.platform, user.user_id,
-                       state=ST_BLOCK_HOUR, data=data)
+    _set_admin(user, ST_BLOCK_HOUR, _block_table=number, _block_date=day,
+               _clarify_table=None)
 
 
 def _clear_pending_block(user: User) -> None:
-    state = db.get_user_state(user.platform, user.user_id) or {}
-    data = dict(state.get("data") or {})
-    data.pop("_block_table", None)
-    data.pop("_block_date", None)
-    db.save_user_state(user.platform, user.user_id, state="main", data=data)
+    _set_admin(user, "main", _block_table=None, _block_date=None)
 
 
 def handle_free_text(user: User, text: str, lang: str) -> bool:
@@ -398,15 +417,19 @@ def handle_free_text(user: User, text: str, lang: str) -> bool:
     if not db.is_admin(user.platform, user.user_id):
         return False
 
-    state = db.get_user_state(user.platform, user.user_id) or {}
-    data = state.get("data") or {}
+    state, data = _admin_data(user)
+
+    # رسالةٌ تحمل رقم طاولة أمرٌ جديد لا جوابٌ عن سؤال معلّق. لولا هذا
+    # لأخذت «الطاولة 12 متاحة» جواباً عن سؤالٍ عن الطاولة 20 فحرّرت
+    # الطاولة الخطأ — وهو عين الخطأ الذي أصلحناه في الحالة المعلّقة.
+    fresh_command = admin_nlu.table_number(text) is not None
 
     # سؤال الساعة معلّق: الرقم المجرّد جوابٌ عنه، والسؤال هو مرساته.
-    if state.get("state") == ST_BLOCK_HOUR and data.get("_block_table"):
+    if (state == ST_BLOCK_HOUR and data.get("_block_table")
+            and not fresh_command):
         hour = slots.hour_from(text)
         if hour:
             day = data.get("_block_date")
-            _clear_pending_block(user)
             block_table(user, lang, int(data["_block_table"]), hour,
                         Date.fromisoformat(day) if day else None)
             return True
@@ -417,8 +440,31 @@ def handle_free_text(user: User, text: str, lang: str) -> bool:
             return True
         _clear_pending_block(user)
 
+    # سؤال توضيحي معلّق: التصحيح يحتفظ برقم الطاولة ولا يبدأ من الصفر.
+    if (state == ST_CLARIFY and data.get("_clarify_table")
+            and not fresh_command):
+        number = int(data["_clarify_table"])
+        answer = admin_nlu.answer_to_clarify(text)
+        if answer in ("free", "yes"):
+            free_table_number(user, lang, number)
+            return True
+        if answer == "block":
+            found = slots.extract(text)
+            if found.get("hour"):
+                block_table(user, lang, number, found["hour"])
+            else:
+                _pending_block(user, number, found.get("date"))
+                _reply(user, texts.t(lang, "admin_ask_block_hour"))
+            return True
+        if answer == "no":
+            _set_admin(user, "main", _clarify_table=None)
+            _reply(user, texts.t(lang, "admin_free_cancelled"))
+            return True
+        _set_admin(user, "main", _clarify_table=None)
+
     last = data.get("_admin_table")
-    verdict = admin_nlu.understand(text, last_table=last)
+    verdict = admin_nlu.understand(text, last_table=last,
+                                   last_action=data.get("_last_action"))
     if not verdict:
         return False
 
@@ -430,8 +476,10 @@ def handle_free_text(user: User, text: str, lang: str) -> bool:
         return True
 
     if action == "clarify_free":
-        # غامضة: نسأل بصفته أدمن، ولا نردّ عليه ردّ زبون.
-        _remember_table(user, value)
+        # غامضة: نسأل بصفته أدمن، ولا نردّ عليه ردّ زبون. ونفتح حالةً
+        # لأن الجواب قد يأتي نصّاً («لا احجزها») لا ضغطةَ زر.
+        _set_admin(user, ST_CLARIFY, _clarify_table=value,
+                   _admin_table=value)
         get_adapter(user.platform).send_buttons(
             user, texts.t(lang, "admin_free_confirm", table=value),
             [(texts.t(lang, "btn_admin_free_yes"), "A:t:%d" % value),
