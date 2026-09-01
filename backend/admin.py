@@ -252,7 +252,16 @@ def notify_seated_options(res: dict) -> None:
 
 # ------------------------------------------------- أوامر الأدمن (SPEC 10.2)
 def _reply(user: User, text: str) -> None:
-    get_adapter(user.platform).send_text(user, text)
+    """ردٌّ إداري: بلا لوحة أزرار الزبون (SPEC 10.2).
+
+    محادثة الأدمن أوامرُ لا تصفّح، فلا تُعرض فيها واجهةُ الزبون. ولو
+    كانت معلّقة من قبلُ تُمسح هنا.
+    """
+    adapter = get_adapter(user.platform)
+    try:
+        adapter.send_text(user, text, plain=True)
+    except TypeError:                      # محوّل لا يدعم المَعلَم بعد
+        adapter.send_text(user, text)
 
 
 def _list_day(user: User, lang: str, day: Date) -> None:
@@ -281,8 +290,27 @@ def _stats(user: User, lang: str) -> None:
         rate=round(100 * busy / total) if total else 0, seats=seats))
 
 
-def free_table_number(user: User, lang: str, number: int) -> bool:
-    """تحرير طاولة برقمها — SPEC 5.6 و10.2. يعيد True إن تحرّرت فعلاً.
+def _held_on(table: dict, day: Date) -> list:
+    return [r for r in db.reservations_on(day.isoformat())
+            if r["table_id"] == table["id"]
+            and r["status"] in config.OCCUPYING_STATUSES]
+
+
+def _other_day_with_booking(table: dict, day: Date):
+    """أول يوم آخر في نافذة الحجز عليه حجزٌ لهذه الطاولة، أو None.
+
+    يمنع الجواب الأخرس: «متاحة أصلاً اليوم» وعليها حجزٌ بكرا جوابٌ
+    صحيح حرفياً ومضلّل عملياً. الأدمن لا يقصد يوماً لم يذكره، فالأولى
+    أن يُسأل عن اليوم بدل أن يُفترض بصمت.
+    """
+    for candidate in booking.bookable_days():
+        if candidate != day and _held_on(table, candidate):
+            return candidate
+    return None
+
+
+def free_table_number(user: User, lang: str, numbers, day: Date | None = None):
+    """تحرير طاولة أو أكثر — SPEC 5.6 و10.2. يعيد True إن تحرّر شيء.
 
     منفّذٌ واحد يلتقي عنده أمر السلاش والنص الحر وزر التأكيد، فلا يوجد
     منطق إداري مكرّر في ثلاثة أمكنة يفترق بينها السلوك مع الوقت.
@@ -291,27 +319,62 @@ def free_table_number(user: User, lang: str, number: int) -> bool:
     الحجز إلى completed، والموقع يقرأ الحجوزات لا الطاولات — فيتحدّث
     من تلقائه في نفس اللحظة.
     """
-    _note_action(user, "free", number)
-    table = next((t for t in db.all_tables()
-                  if t["table_number"] == number), None)
-    if not table:
-        _reply(user, texts.t(lang, "admin_table_not_found", table=number))
-        return False
-    today = config.today_local().isoformat()
-    held = [r for r in db.reservations_on(today)
-            if r["table_id"] == table["id"]
-            and r["status"] in config.OCCUPYING_STATUSES]
-    if not held:
-        _reply(user, texts.t(lang, "admin_table_already_free", table=number))
-        return False
-    for res in held:
-        db.update_reservation(res["id"], status="completed")
-    _reply(user, texts.t(lang, "admin_table_freed", table=number))
-    return True
+    if isinstance(numbers, int):
+        numbers = [numbers]
+    day = day or config.today_local()
+    label = _fmt_day(day, lang)
+    _note_action(user, "free", numbers[0], day)
+
+    freed, missing = [], []
+    for number in numbers:
+        table = next((t for t in db.all_tables()
+                      if t["table_number"] == number), None)
+        if not table:
+            _reply(user, texts.t(lang, "admin_table_not_found", table=number))
+            continue
+        held = _held_on(table, day)
+        if not held:
+            missing.append((number, table))
+            continue
+        for res in held:
+            db.update_reservation(res["id"], status="completed")
+        freed.append(number)
+
+    if freed:
+        if len(freed) == 1:
+            _reply(user, texts.t(lang, "admin_table_freed", table=freed[0],
+                                 date=label))
+        else:
+            _reply(user, texts.t(lang, "admin_tables_freed", date=label,
+                                 tables=" و".join(str(n) for n in freed)))
+
+    # تُجمع الطاولات الفارغة قبل السؤال لا بعده: سؤالٌ لكل طاولة كان
+    # يدهس حالةَ سابقتها، فلا يبقى معلّقاً إلا آخرها ويضيع الباقي.
+    elsewhere, already = {}, []
+    for number, table in missing:
+        other = _other_day_with_booking(table, day)
+        if other:
+            elsewhere.setdefault(other, []).append(number)
+        else:
+            already.append(number)
+
+    if already:
+        _reply(user, texts.t(lang, "admin_table_already_free",
+                             table=" و".join(str(n) for n in already),
+                             date=label))
+    for other, nums in elsewhere.items():
+        _set_admin(user, ST_DAY, _day_tables=nums, _day_action="free",
+                   _day_other=other.isoformat())
+        _reply(user, texts.t(lang, "admin_maybe_other_day",
+                             table=" و".join(str(n) for n in nums),
+                             date=label, other=_fmt_day(other, lang)))
+    return bool(freed)
 
 
 ST_BLOCK_HOUR = "adm_block_hour"
 ST_CLARIFY = "adm_clarify"
+ST_DAY = "adm_day"
+PENDING_STATES = (ST_BLOCK_HOUR, ST_CLARIFY, ST_DAY)
 
 # منصّة الحجز الإداري ليست منصّة زبون، وهذا هو المقصود: لا صاحب له
 # يُشعَر، فلا يظهر في «حجوزاتي» لأحد، ولا تلتقطه الجدولة (تتخطّى كل
@@ -322,21 +385,28 @@ BLOCK_PLATFORM = "admin"
 BLOCK_USER = "block"
 
 
-def block_table(user: User, lang: str, number: int, hour: int,
+def block_table(user: User, lang: str, numbers, hour: int,
                 day: Date | None = None) -> bool:
-    """حجز إداري لطاولة — SPEC 10.2.1. بلا اسم ولا هاتف."""
-    _note_action(user, "block", number)
+    """حجز إداري لطاولة أو أكثر — SPEC 10.2.1. بلا اسم ولا هاتف."""
+    if isinstance(numbers, int):
+        numbers = [numbers]
+    day = day or config.today_local()
+    _note_action(user, "block", numbers[0], day)
+    done = False
+    for number in numbers:
+        done = _block_one(user, lang, number, hour, day) or done
+    return done
+
+
+def _block_one(user: User, lang: str, number: int, hour: int,
+               day: Date) -> bool:
     table = next((t for t in db.all_tables()
                   if t["table_number"] == number), None)
     if not table:
         _reply(user, texts.t(lang, "admin_table_not_found", table=number))
         return False
 
-    day = day or config.today_local()
-    taken = [r for r in db.reservations_on(day.isoformat())
-             if r["table_id"] == table["id"]
-             and r["status"] in config.OCCUPYING_STATUSES]
-    if taken:
+    if _held_on(table, day):
         _reply(user, texts.t(lang, "admin_table_taken", table=number,
                              date=_fmt_day(day, lang)))
         return False
@@ -381,14 +451,16 @@ def _set_admin(user: User, state: str, **fields) -> None:
     db.save_user_state(user.platform, user.user_id, state=state, data=data)
 
 
-def _note_action(user: User, action: str, number: int) -> None:
+def _note_action(user: User, action: str, number: int, day=None) -> None:
     """يسجّل آخر فعل إداري نُفِّذ وطاولته، ويطوي أي سؤال معلّق.
 
     الفعل يُسجَّل عند الشروع لا عند النجاح: «الطاولة 30 متاحة» وهي
     متاحة أصلاً تبقى إعلانَ نيّة تحرير، فترثها «وطاولة 36 كمان» صحيحةً.
     """
     _set_admin(user, "main", _admin_table=number, _last_action=action,
-               _block_table=None, _block_date=None, _clarify_table=None)
+               _last_day=day.isoformat() if day else None,
+               _block_table=None, _block_date=None, _clarify_table=None,
+               _day_tables=None, _day_action=None)
 
 
 def _remember_table(user: User, number) -> None:
@@ -397,8 +469,10 @@ def _remember_table(user: User, number) -> None:
     _set_admin(user, state or "main", _admin_table=number)
 
 
-def _pending_block(user: User, number: int, day) -> None:
-    _set_admin(user, ST_BLOCK_HOUR, _block_table=number, _block_date=day,
+def _pending_block(user: User, numbers, day) -> None:
+    if isinstance(numbers, int):
+        numbers = [numbers]
+    _set_admin(user, ST_BLOCK_HOUR, _block_table=numbers, _block_date=day,
                _clarify_table=None)
 
 
@@ -424,14 +498,39 @@ def handle_free_text(user: User, text: str, lang: str) -> bool:
     # الطاولة الخطأ — وهو عين الخطأ الذي أصلحناه في الحالة المعلّقة.
     fresh_command = admin_nlu.table_number(text) is not None
 
+    # سؤال «أي يوم؟» معلّق: جوابٌ بتاريخ يُعيد تنفيذ الفعل نفسه عليه.
+    if state == ST_DAY and data.get("_day_tables") and not fresh_command:
+        found = slots.extract(text)
+        if found.get("date"):
+            day = Date.fromisoformat(found["date"])
+            tables = list(data["_day_tables"])
+            if data.get("_day_action") == "block":
+                hour = found.get("hour") or slots.hour_from(text)
+                if hour:
+                    block_table(user, lang, tables, hour, day)
+                else:
+                    _pending_block(user, tables[0], found["date"])
+                    _reply(user, texts.t(lang, "admin_ask_block_hour"))
+            else:
+                free_table_number(user, lang, tables, day)
+            return True
+        if admin_nlu.answer_to_clarify(text) in ("yes", "free"):
+            other = data.get("_day_other")
+            if other:
+                free_table_number(user, lang, list(data["_day_tables"]),
+                                  Date.fromisoformat(other))
+                return True
+
     # سؤال الساعة معلّق: الرقم المجرّد جوابٌ عنه، والسؤال هو مرساته.
     if (state == ST_BLOCK_HOUR and data.get("_block_table")
             and not fresh_command):
         hour = slots.hour_from(text)
         if hour:
             day = data.get("_block_date")
-            block_table(user, lang, int(data["_block_table"]), hour,
-                        Date.fromisoformat(day) if day else None)
+            pending = data["_block_table"]
+            block_table(user, lang,
+                        pending if isinstance(pending, list) else [pending],
+                        hour, Date.fromisoformat(day) if day else None)
             return True
         # ليس ساعة: إن كان أمراً إدارياً آخر نتركه يُقرأ من جديد،
         # وإلا نعيد السؤال بلا أن نتشبّث بالحالة عمياً.
@@ -444,21 +543,33 @@ def handle_free_text(user: User, text: str, lang: str) -> bool:
     if (state == ST_CLARIFY and data.get("_clarify_table")
             and not fresh_command):
         number = int(data["_clarify_table"])
+        pending = data.get("_clarify_tables") or [number]
+        kept = data.get("_clarify_date")
         answer = admin_nlu.answer_to_clarify(text)
+        found = slots.extract(text)
+        when = found.get("date") or kept
+        when = Date.fromisoformat(when) if when else None
         if answer in ("free", "yes"):
-            free_table_number(user, lang, number)
+            free_table_number(user, lang, pending, when)
             return True
         if answer == "block":
-            found = slots.extract(text)
             if found.get("hour"):
-                block_table(user, lang, number, found["hour"])
+                block_table(user, lang, pending, found["hour"], when)
             else:
-                _pending_block(user, number, found.get("date"))
+                _pending_block(user, pending,
+                               when.isoformat() if when else None)
                 _reply(user, texts.t(lang, "admin_ask_block_hour"))
             return True
         if answer == "no":
             _set_admin(user, "main", _clarify_table=None)
             _reply(user, texts.t(lang, "admin_free_cancelled"))
+            return True
+        # تاريخٌ وحده جواباً عن السؤال: «بكرا» تعني الطاولةَ نفسها بذاك
+        # اليوم، فنمضي بها بدل أن نضيّع السؤال.
+        if slots.extract(text).get("date"):
+            free_table_number(
+                user, lang, number,
+                Date.fromisoformat(slots.extract(text)["date"]))
             return True
         _set_admin(user, "main", _clarify_table=None)
 
@@ -466,23 +577,42 @@ def handle_free_text(user: User, text: str, lang: str) -> bool:
     verdict = admin_nlu.understand(text, last_table=last,
                                    last_action=data.get("_last_action"))
     if not verdict:
+        # الحارس الأخير: مسار الأدمن لا ينزل إلى ترحيب الزبون ولا إلى
+        # ردٍّ عامّ ما دام في سياق إداري قائم. جملةٌ لم تكتمل أمراً لكنها
+        # تحمل شظيّةً إدارية — تاريخاً أو إيجاباً أو فعلاً — تخصّ ما
+        # قبلها لا محادثةً جديدة، فنسأل توضيحاً إدارياً.
+        # وهذا حارسٌ ثانٍ فوق حارس الحالة المعلّقة: التسريب الذي وقع
+        # فعلاً وقع **بلا حالة معلّقة**، بعد أمرٍ نُفِّذ وانتهى.
+        if (state in PENDING_STATES
+                or (data.get("_last_action")
+                    and admin_nlu.has_admin_fragment(text))):
+            table = data.get("_admin_table")
+            _reply(user, texts.t(lang, "admin_lost", table=table)
+                   if table else texts.t(lang, "admin_lost_bare"))
+            return True
         return False
 
     action, value = verdict
 
     if action == "free":
-        _remember_table(user, value)
-        free_table_number(user, lang, value)
+        numbers, day = value
+        free_table_number(user, lang, numbers,
+                          Date.fromisoformat(day) if day else None)
         return True
 
     if action == "clarify_free":
         # غامضة: نسأل بصفته أدمن، ولا نردّ عليه ردّ زبون. ونفتح حالةً
         # لأن الجواب قد يأتي نصّاً («لا احجزها») لا ضغطةَ زر.
-        _set_admin(user, ST_CLARIFY, _clarify_table=value,
-                   _admin_table=value)
+        numbers, day = value
+        first = numbers[0]
+        _set_admin(user, ST_CLARIFY, _clarify_table=first,
+                   _clarify_tables=numbers, _admin_table=first,
+                   _clarify_date=day)
+        label = (" و".join(str(n) for n in numbers) if len(numbers) > 1
+                 else str(first))
         get_adapter(user.platform).send_buttons(
-            user, texts.t(lang, "admin_free_confirm", table=value),
-            [(texts.t(lang, "btn_admin_free_yes"), "A:t:%d" % value),
+            user, texts.t(lang, "admin_free_confirm", table=label),
+            [(texts.t(lang, "btn_admin_free_yes"), "A:t:%d" % first),
              (texts.t(lang, "btn_admin_free_no"), "A:tx:0")])
         return True
 
@@ -491,14 +621,14 @@ def handle_free_text(user: User, text: str, lang: str) -> bool:
         return True
 
     if action == "block":
-        number, hour, day = value
-        _remember_table(user, number)
+        numbers, hour, day = value
         when = Date.fromisoformat(day) if day else None
         if hour:
-            block_table(user, lang, number, hour, when)
+            block_table(user, lang, numbers, hour, when)
             return True
         # الوقت الحقل الوحيد الناقص: سؤال واحد، ولا شيء غيره.
-        _pending_block(user, number, day)
+        _remember_table(user, numbers[0])
+        _pending_block(user, numbers, day)
         _reply(user, texts.t(lang, "admin_ask_block_hour"))
         return True
 

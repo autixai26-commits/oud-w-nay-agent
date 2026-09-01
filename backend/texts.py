@@ -141,7 +141,11 @@ AR = {
     'btn_table_free': '🔓 الطاولة فضيت',
     'admin_marked_seated': 'تم — الزبون على الطاولة {table} ✅',
     'admin_marked_noshow': 'تم — تحرّرت الطاولة {table} ✅',
-    'admin_table_freed': 'تحرّرت الطاولة {table} وصارت متاحة اليوم ✅',
+    'admin_table_freed': 'تحرّرت الطاولة {table} وصارت متاحة {date} ✅',
+    'admin_tables_freed': 'تحرّرت الطاولات {tables} وصارت متاحة {date} ✅',
+    'admin_maybe_other_day': 'الطاولة {table} ما عليها حجز {date}، بس عليها حجز {other} — تقصد {other}؟',
+    'admin_lost': 'ضلّيت معك بس ما فهمت تماماً 🙏 اكتبلي مثلاً «الطاولة {table} متاحة بكرا» أو «الطاولة {table} محجوزة الساعة 8».',
+    'admin_lost_bare': 'ما فهمت قصدك تماماً 🙏 اكتبلي رقم الطاولة وشو بدك فيها — مثلاً «الطاولة 12 متاحة».',
     'auto_cancelled_customer': 'أُلغي حجزك تلقائياً لأنه ما وصلنا تأكيد حضورك 🙏\nبتقدر تحجز من جديد وقت ما بدك.',
     'auto_cancelled_admin': 'إلغاء تلقائي ⏰ مرّت 30 دقيقة على الموعد بلا رد:\n\n{summary}\nتحرّرت الطاولة.',
     'btn_my_bookings': '📋 حجوزاتي',
@@ -177,7 +181,7 @@ AR = {
     'admin_free_cancelled': 'تمام، ما غيّرت إشي.',
     'btn_admin_free_yes': '✅ نعم، فضّيها',
     'btn_admin_free_no': '❌ لأ',
-    'admin_table_already_free': 'الطاولة {table} متاحة أصلاً اليوم.',
+    'admin_table_already_free': 'الطاولة {table} متاحة أصلاً {date}.',
     'admin_help': 'أوامر الأدمن:\n/today — حجوزات اليوم\n/date 2026-09-01 — حجوزات تاريخ\n/cancel رمز — إلغاء حجز\n/edit رمز — تعديل حجز\n/book — حجز يدوي\n/free رقم — تحرير طاولة\n/stats — إحصائيات اليوم',
 }
 
@@ -305,7 +309,11 @@ EN = {
     'btn_table_free': '🔓 Table is free',
     'admin_marked_seated': 'Done — guest seated at table {table} ✅',
     'admin_marked_noshow': 'Done — table {table} released ✅',
-    'admin_table_freed': 'Table {table} is free and available today ✅',
+    'admin_table_freed': 'Table {table} is free and available {date} ✅',
+    'admin_tables_freed': 'Tables {tables} are now free {date} ✅',
+    'admin_maybe_other_day': 'Table {table} has no booking {date}, but it does on {other} — do you mean {other}?',
+    'admin_lost': "I'm still with you, I just didn't catch that 🙏 Try: 'table {table} is free tomorrow' or 'table {table} is booked at 8'.",
+    'admin_lost_bare': "I didn't quite catch that 🙏 Send me the table number and what to do — e.g. 'table 12 is free'.",
     'auto_cancelled_customer': "Your booking was cancelled automatically as we didn't hear from you 🙏\nYou're welcome to book again anytime.",
     'auto_cancelled_admin': 'Auto-cancelled ⏰ 30 minutes past the time with no reply:\n\n{summary}\nThe table has been released.',
     'btn_my_bookings': '📋 My bookings',
@@ -341,7 +349,7 @@ EN = {
     'admin_free_cancelled': "Alright, I haven't changed anything.",
     'btn_admin_free_yes': '✅ Yes, free it',
     'btn_admin_free_no': '❌ No',
-    'admin_table_already_free': 'Table {table} is already free today.',
+    'admin_table_already_free': 'Table {table} is already free {date}.',
     'admin_help': "Admin commands:\n/today — today's bookings\n/date 2026-09-01 — bookings for a date\n/cancel CODE — cancel a booking\n/edit CODE — edit a booking\n/book — manual booking\n/free NUMBER — release a table\n/stats — today's statistics",
 }
 

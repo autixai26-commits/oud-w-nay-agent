@@ -19,6 +19,10 @@
 الطبقة الثالثة ليست تساهلاً: صاحب المطعم هو الأدمن نفسه، وهو يجرّب
 البوت زبوناً ويتصفّح المنيو ويحجز. لو خُطفت كل رسائله إلى المسار
 الإداري لَما استطاع استعمال بوته. الفصل يكون بالمحتوى لا بالهوية.
+
+والأمر يحمل **قائمة طاولات لا طاولةً واحدة**، وتاريخاً صريحاً إن ذُكر.
+كلاهما كان مفقوداً: «طاولة 35 و36» كانت تُقرأ 35 وحدها، و«بكرا» كانت
+تُهمَل فيُفحص اليومُ دائماً.
 """
 import re
 
@@ -28,17 +32,22 @@ import slots
 # «طوله» و«طاوله» و«الطاولة» إملاءات واحدة في الكتابة السريعة — وردت
 # «طوله» فعلاً في رسالة الأدمن. الرقم مرساةٌ إلزامية: «بدي احجز طاولة»
 # بلا رقم ليست أمراً إدارياً.
-_TABLE = re.compile(r"(?:طاول\w*|طول\w*|table)\s*(?:رقم\s*)?(\d{1,2})")
+# [^\W\d] حرفٌ لا رقم: لولاه لابتلع \w* الرقمَ في «طاولة36»
+# فقُرئت الطاولةُ 6.
+_TABLE = re.compile(
+    r"(?:طاول[^\W\d]*|طول[^\W\d]*|table)\s*(?:رقم\s*)?(\d{1,2})")
 _BARE_NUMBER = re.compile(r"(?:^|\s)رقم\s*(\d{1,2})(?:\s|$)")
+# سلسلة أرقام معطوفة تلي المرساة: «طاولة 35 و36 و37».
+_MORE_NUMBERS = re.compile(r"\A\s*(?:و|,|،|&|and)\s*(\d{1,2})")
 
-_FREE = ("متاحه", "متاح", "متاحات", "فاضيه", "فاضي", "فضيت", "فضت",
-         "فضيوا", "فضيها", "فضيهم", "خلصت", "خلص", "خلصوا", "طلعوا",
-         "راحوا", "مشيوا", "حرر", "حررها", "حررهم", "فرغ", "فرغت",
-         "فرغها", "قامو", "قاموا", "الغ الحجز",
+_FREE = ("متاحه", "متاح", "متاحات", "متاحتين", "فاضيه", "فاضي", "فاضيات",
+         "فضيت", "فضت", "فضيوا", "فضيها", "فضيهم", "خلصت", "خلص",
+         "خلصوا", "طلعوا", "راحوا", "مشيوا", "حرر", "حررها", "حررهم",
+         "فرغ", "فرغت", "فرغها", "قامو", "قاموا",
          "free", "freed", "empty", "available", "left", "done")
 
-_BUSY = ("محجوزه", "محجوز", "مشغوله", "مشغول", "معموره",
-         "busy", "occupied", "taken", "reserved")
+_BUSY = ("محجوزه", "محجوز", "محجوزات", "محجوزتين", "مشغوله", "مشغول",
+         "معموره", "busy", "occupied", "taken", "reserved")
 
 _LIST = ("حجوزات اليوم", "شو عندنا اليوم", "شو في اليوم", "مين حاجز",
          "مين جاي", "جدول اليوم", "قائمه اليوم", "todays bookings",
@@ -48,18 +57,9 @@ _STATS = ("الاشغال", "اشغال", "كم حجز", "الاحصائيات",
           "occupancy", "stats")
 
 # تعديل بلا هدف صريح: «عدّلها على موقع الحجز».
-_EDIT = ("عدل", "عدلها", "عدله", "غير", "غيرها", "حدث", "حدثها",
-         "حدثه", "update")
+_EDIT = ("عدل", "عدلها", "عدله", "عدلهم", "غير", "غيرها", "حدث", "حدثها",
+         "حدثه", "حدثهم", "حول", "حولها", "خليها", "خليهم", "update")
 
-# «احجز لأحمد» أمرٌ إداري، و«احجزلي» طلبُ زبون. اللام الفارقة تفصل
-# بينهما، فنستثني «لي» و«لنا» و«لحالنا» صراحةً. ولا تكفي وحدها: «بدي
-# احجز لحالنا» تجتاز اللام لكن «بدي» تعلن أن صاحبها زبون يطلب لنفسه،
-# لا أدمن يأمر. فعل الأمر المجرّد هو المرساة، وأي فعل رغبة يُلغيها.
-_BOOK_FOR = re.compile(r"احجز\s*ل(?!ي\b|نا\b|حال)\s*\w+")
-_WANTS = re.compile(
-    r"\b(?:بدي|بدنا|بدها|بدهم|ابغى|اريد|عايز|ودي|wanna|i want|i'd like)\b")
-
-# رمز الحجز ستّ خانات، وقد تفصله كلمة عن الفعل: «الغِ الحجز ABC123».
 # فعل الحجز الصريح يحسم الاتجاه بلا غموض: «احجزلي طاولة 20» أمرُ حجز
 # لا سؤالٌ عن التحرير. ورقم الطاولة نفسه علامةٌ إدارية — الزبون لا
 # يختار طاولةً برقمها في المحادثة أصلاً، بل على الخريطة.
@@ -72,25 +72,82 @@ _CONTINUE = ("كمان", "وكذلك", "كذلك", "زيها", "مثلها", "ب
 
 _YES = ("اه", "ايه", "اي", "نعم", "تمام", "اكيد", "صح", "yes", "yep",
         "yeah", "ok", "okay", "sure")
-_NO = ("لا", "no", "nope", "مش هيك")
+_NO = ("لا", "no", "nope", "مش هيك", "غلط")
 
+# «احجز لأحمد» أمرٌ إداري، و«احجزلي» طلبُ زبون. اللام الفارقة تفصل
+# بينهما، فنستثني «لي» و«لنا» و«لحالنا» صراحةً. ولا تكفي وحدها: «بدي
+# احجز لحالنا» تجتاز اللام لكن «بدي» تعلن أن صاحبها زبون يطلب لنفسه،
+# لا أدمن يأمر. فعل الأمر المجرّد هو المرساة، وأي فعل رغبة يُلغيها.
+_BOOK_FOR = re.compile(r"احجز\s*ل(?!ي\b|نا\b|حال)\s*\w+")
+_WANTS = re.compile(
+    r"\b(?:بدي|بدنا|بدها|بدهم|ابغى|اريد|عايز|ودي|wanna|i want|i'd like)\b")
+
+# رمز الحجز ستّ خانات، وقد تفصله كلمة عن الفعل: «الغِ الحجز ABC123».
 _CANCEL_CODE = re.compile(
     r"(?:الغ\w*|احذف|شيل|cancel)\b[\s\S]{0,14}?\b([a-z0-9]{6})\b")
 
 
+# السوابق العربية تلتصق بالكلمة: «لمتاح» و«المتاحة» و«بمتاح» كلها
+# «متاح». الحدُّ وحده لا يراها لأن اللام حرفُ كلمة، فنسمح بحرف جرٍّ
+# واحد و«ال» قبلها — ولا نتساهل أكثر: «تخلّص» تبقى خارج «خلص» لأن
+# التاء ليست من حروف الجر.
+_PROCLITIC = r"(?<![^\W\d])[لبوفك]?(?:ال)?"
+
+
 def _has(body: str, words) -> bool:
-    """مطابقة بحدود كلمات لا بتضمين — «خلص» ليست جزءاً من «تخلّص»."""
-    return any(re.search(r"\b" + re.escape(w) + r"\b", body) for w in words)
+    """مطابقة بحدود كلمات لا بتضمين، مع تجاوز السوابق الملتصقة."""
+    return any(re.search(_PROCLITIC + re.escape(w) + r"\b", body)
+               for w in words)
+
+
+def _numbers(body: str, loose=False) -> list:
+    """كل أرقام الطاولات في الرسالة بترتيب ورودها، بلا تكرار.
+
+    الأمر قد يحمل أكثر من طاولة: «طاولة 35 و36». تُلتقط المرساة أولاً
+    ثم تُتبَع سلسلة المعطوفات بعدها مباشرةً، فلا يُخلط رقمُ طاولة برقم
+    ساعة: «الطاولة 35 محجوزة الساعة 8» طاولةٌ واحدة، لأن «محجوزة»
+    تقطع السلسلة قبل الثمانية.
+    """
+    found = []
+    for match in _TABLE.finditer(body):
+        found.append(int(match.group(1)))
+        tail = body[match.end():]
+        while True:
+            more = _MORE_NUMBERS.match(tail)
+            if not more:
+                break
+            found.append(int(more.group(1)))
+            tail = tail[more.end():]
+    if not found:
+        match = _BARE_NUMBER.search(body)
+        if match:
+            found.append(int(match.group(1)))
+    if not found and loose:
+        # فعلٌ صريح بلا كلمة «طاولة»: «حرر 35 و36». يُمحى موضع الساعة
+        # أولاً فلا تُقرأ ساعةٌ طاولةً، ويُستبعد ما يتبعه اسمُ أشخاص.
+        rest = slots.strip_hour(body)
+        for match in re.finditer(r"(?<!\d)(\d{1,2})(?!\d)", rest):
+            after = rest[match.end():]
+            if re.match(r"\s*(?:اشخاص|شخص|نفر|افراد|ناس|people|persons)",
+                        after):
+                continue
+            found.append(int(match.group(1)))
+    seen, out = set(), []
+    for number in found:
+        if number not in seen:
+            seen.add(number)
+            out.append(number)
+    return out
+
+
+def table_numbers(text: str) -> list:
+    """أرقام الطاولات في الرسالة — تُميّز الأمر الجديد عن جواب سؤال."""
+    return _numbers(slots.normalize(text))
 
 
 def table_number(text: str):
-    """رقم الطاولة في الرسالة، أو None — يُستعمل لتمييز أمر جديد عن جواب."""
-    return _table_number(slots.normalize(text))
-
-
-def _table_number(body: str):
-    match = _TABLE.search(body) or _BARE_NUMBER.search(body)
-    return int(match.group(1)) if match else None
+    numbers = table_numbers(text)
+    return numbers[0] if numbers else None
 
 
 def understand(text: str, last_table=None, last_action=None):
@@ -101,14 +158,22 @@ def understand(text: str, last_table=None, last_action=None):
     نفسها، وهو ما يفعله أي إنسان في المحادثة.
 
     ``last_action`` فعلُ آخر أمر نُفِّذ، ترثه رسالةُ متابعة مثل «وطاولة
-    36 كمان»: كلمة الاستمرار تحيل على الفعل السابق كما يحيل الضمير على
+    36 كمان»، أو تصحيحُ تاريخ مثل «بكرا مو اليوم»: كلمةُ الاستمرار
+    والتاريخُ المصحَّح كلاهما يحيل على الفعل السابق كما يحيل الضمير على
     الاسم السابق.
     """
     body = slots.normalize(text)
     if not body.strip():
         return None
 
-    number = _table_number(body)
+    freed_verb = _has(body, _FREE)
+    booked_verb = _has(body, _BOOK_VERB) or _has(body, _BUSY)
+    # الرقم المجرّد لا يصير طاولةً إلا خلف فعل إداري صريح، ولا يصير
+    # حتى حينها إن أعلن قائلُه أنه زبون يطلب لنفسه.
+    loose = (freed_verb or booked_verb) and not _WANTS.search(body)
+    numbers = _numbers(body, loose=loose)
+    found = slots.extract(text)
+    day = found.get("date")
 
     # -------------------------------------------------- أوامر واضحة
     match = _CANCEL_CODE.search(body)
@@ -124,30 +189,40 @@ def understand(text: str, last_table=None, last_action=None):
     if _has(body, _STATS):
         return ("stats", None)
 
-    if number is not None:
-        found = slots.extract(text)
-        booked = _has(body, _BOOK_VERB) or _has(body, _BUSY)
+    freed, booked = freed_verb, booked_verb
 
+    if numbers:
         # SPEC 10.2.1 — حجز إداري: الوقت وحده مطلوب، ويُقرأ من الجملة
         # نفسها إن ذُكر فيها. لا اسم ولا هاتف، فليس حجز زبون.
         if booked:
-            return ("block", (number, found.get("hour"), found.get("date")))
-        if _has(body, _FREE):
-            return ("free", number)
+            return ("block", (numbers, found.get("hour"), day))
+        if freed:
+            return ("free", (numbers, day))
 
         # لا فعل: ترث الرسالةُ فعلَ آخر أمر نُفِّذ إن أعلنت الاستمرار.
         if _has(body, _CONTINUE) and last_action in ("free", "block"):
             if last_action == "free":
-                return ("free", number)
-            return ("block", (number, found.get("hour"), found.get("date")))
+                return ("free", (numbers, day))
+            return ("block", (numbers, found.get("hour"), day))
 
         # رقم طاولة بلا فعل ولا استمرار: غامضة لا رسالة زبون.
-        return ("clarify_free", number)
+        return ("clarify_free", (numbers, day))
 
-    # ضمير التعديل بلا رقم: يُحلّ بآخر طاولة ذكرها هذا الأدمن.
+    # ------------------------------- بلا رقم: الكلام يحيل على ما سبق
+    if last_table is not None:
+        if freed:
+            return ("free", ([last_table], day))
+        if booked:
+            return ("block", ([last_table], found.get("hour"), day))
+        # «بكرا مو اليوم» تصحيحُ تاريخٍ لأمرٍ نُفِّذ للتوّ، لا حديثٌ جديد.
+        if day and last_action in ("free", "block"):
+            if last_action == "free":
+                return ("free", ([last_table], day))
+            return ("block", ([last_table], found.get("hour"), day))
+        if _has(body, _EDIT):
+            return ("clarify_free", ([last_table], day))
+
     if _has(body, _EDIT):
-        if last_table is not None:
-            return ("clarify_free", last_table)
         return ("clarify_target", None)
 
     # لا إشارة إدارية: رسالة زبون عادية من صاحب المطعم.
@@ -173,3 +248,22 @@ def answer_to_clarify(text: str):
     if _has(body, _NO):
         return "no"
     return None
+
+
+def has_admin_fragment(text: str) -> bool:
+    """هل في الرسالة شظيّةٌ إدارية وإن لم تكتمل أمراً؟
+
+    حارسٌ أخير: أدمنٌ في سياق إداري قائم لا يجوز أن ينزل ردُّه إلى
+    ترحيب الزبون لمجرّد أن جملته لم تكتمل أمراً. «بكرا مو اليوم»
+    شظيّةُ تاريخ، و«اه» شظيّةُ إيجاب — كلتاهما تخصّ ما قبلها، لا
+    محادثةً جديدة. أما سؤالٌ حقيقي بلا أي شظيّة فيمضي لمسار الزبون
+    كما كان، فصاحب المطعم يسأل بوته أحياناً.
+    """
+    body = slots.normalize(text)
+    if not body.strip():
+        return False
+    return bool(
+        _numbers(body, loose=True) or slots.extract(text).get("date")
+        or _has(body, _FREE) or _has(body, _BUSY) or _has(body, _BOOK_VERB)
+        or _has(body, _EDIT) or _has(body, _YES) or _has(body, _NO)
+        or _has(body, _CONTINUE))

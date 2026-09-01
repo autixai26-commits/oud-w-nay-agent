@@ -88,26 +88,33 @@ def main() -> int:                                    # noqa: C901
     print("\n1) قراءة التعليمة الإدارية الحرة")
     for phrase, want in [
             # الرسائل الحرفية الثلاث من محادثة الأدمن
-            ("طوله رقم 33 متاحه خلص الزبائن", ("free", 33)),
-            ("الطاولة رقم 33 متاحه", ("free", 33)),
-            ("عدلها على موقع الحجز", ("clarify_free", 33)),
+            ("طوله رقم 33 متاحه خلص الزبائن", ("free", ([33], None))),
+            ("الطاولة رقم 33 متاحه", ("free", ([33], None))),
+            ("عدلها على موقع الحجز", ("clarify_free", ([33], None))),
             # صيغ أخرى
-            ("طاولة 5 فضيت", ("free", 5)),
-            ("الطاولة 12 راحوا", ("free", 12)),
-            ("table 7 is free", ("free", 7)),
-            ("الطاولة 33", ("clarify_free", 33)),
-            ("الطاولة 12 محجوزة", ("block", (12, None, None))),
+            ("طاولة 5 فضيت", ("free", ([5], None))),
+            ("الطاولة 12 راحوا", ("free", ([12], None))),
+            ("table 7 is free", ("free", ([7], None))),
+            ("الطاولة 33", ("clarify_free", ([33], None))),
+            ("الطاولة 12 محجوزة", ("block", ([12], None, None))),
             # فعل الحجز الصريح يحسم الاتجاه: لا غموض بين حجز وتحرير
-            ("احجزلي طاولة 20", ("block", (20, None, None))),
-            ("احجز طاولة 5 الساعة 8", ("block", (5, 20, None))),
-            ("ثبت طاولة 9", ("block", (9, None, None))),
-            ("الطاولة 5 محجوزة الساعة 8", ("block", (5, 20, None))),
-            ("table 6 is reserved at 7", ("block", (6, 19, None))),
+            ("احجزلي طاولة 20", ("block", ([20], None, None))),
+            ("احجز طاولة 5 الساعة 8", ("block", ([5], 20, None))),
+            ("ثبت طاولة 9", ("block", ([9], None, None))),
+            ("الطاولة 5 محجوزة الساعة 8", ("block", ([5], 20, None))),
+            ("table 6 is reserved at 7", ("block", ([6], 19, None))),
+            # قائمة طاولات في أمر واحد
+            ("بدي تحول طاولة 35 و36 لمتاح", ("free", ([35, 36], None))),
+            ("طاولة 35 و36 و37 متاحة", ("free", ([35, 36, 37], None))),
+            ("حدث الطاولتين لمتاح طاولة 35 وطاولة36",
+             ("free", ([35, 36], None))),
+            ("حرر 35 و36", ("free", ([35, 36], None))),
+            ("احجز طاولة 5 و6 الساعة 8", ("block", ([5, 6], 20, None))),
             ("شو حجوزات اليوم", ("today", None)),
             ("كم الاشغال اليوم", ("stats", None)),
             ("احجز لأحمد بكرا", ("book", None)),
             ("الغِ الحجز ABC123", ("cancel", "ABC123")),
-            ("عدّلها", ("clarify_free", 33)),
+            ("عدّلها", ("clarify_free", ([33], None))),
     ]:
         got = admin_nlu.understand(phrase, last_table=33)
         check(got == want, "«%s» -> %s" % (phrase, got))
@@ -140,7 +147,7 @@ def main() -> int:                                    # noqa: C901
           "الطاولة %d محجوزة قبل التعليمة" % number)
 
     msgs = say(boss, "الطاولة رقم %d متاحه خلص الزبائن" % number)
-    check(texts.t("ar", "admin_table_freed", table=number) in blob(msgs),
+    check(texts.t("ar", "admin_table_freed", table=number, date=admin._fmt_day(config.today_local(), "ar")) in blob(msgs),
           "الردّ إداري: تحرّرت الطاولة")
     check(db.get_reservation(row["id"])["status"] == "completed",
           "الحجز صار completed فعلاً في القاعدة")
@@ -150,7 +157,7 @@ def main() -> int:                                    # noqa: C901
 
     # تكرار نفس التعليمة
     msgs = say(boss, "الطاولة رقم %d متاحه" % number)
-    check(texts.t("ar", "admin_table_already_free", table=number)
+    check(texts.t("ar", "admin_table_already_free", table=number, date=admin._fmt_day(config.today_local(), "ar"))
           in blob(msgs), "التكرار: متاحة أصلاً — لا ردّ زبون")
 
     # ------------------------- 4) نفس الجملة من الطرفين تُعامَل مختلفةً
@@ -170,8 +177,8 @@ def main() -> int:                                    # noqa: C901
     check(texts.t("ar", "my_bookings_empty") not in admin_reply,
           "الأدمن: لم يُبحث له عن حجوزات شخصية")
     is_admin_reply = (
-        texts.t("ar", "admin_table_freed", table=33) in admin_reply
-        or texts.t("ar", "admin_table_already_free", table=33) in admin_reply
+        texts.t("ar", "admin_table_freed", table=33, date=admin._fmt_day(config.today_local(), "ar")) in admin_reply
+        or texts.t("ar", "admin_table_already_free", table=33, date=admin._fmt_day(config.today_local(), "ar")) in admin_reply
         or texts.t("ar", "admin_free_confirm", table=33) in admin_reply
         or texts.t("ar", "admin_table_not_found", table=33) in admin_reply)
     check(is_admin_reply, "الأدمن: الرد إداري — «%s»" % admin_reply[:60])
@@ -179,7 +186,7 @@ def main() -> int:                                    # noqa: C901
     msgs_guest = say(guest, sentence)
     guest_reply = blob(msgs_guest)
     check(not any(
-        texts.t("ar", k, table=33) in guest_reply
+        texts.t("ar", k, table=33, date="", other="", tables="") in guest_reply
         for k in ("admin_table_freed", "admin_table_already_free",
                   "admin_free_confirm", "admin_which_table",
                   "admin_table_not_found")),
@@ -353,7 +360,7 @@ def main() -> int:                                    # noqa: C901
 
     # --- التناظر: نفس الطاولة تُحرَّر بالأمر العادي
     msgs = say(boss, "الطاولة %d متاحة" % number)
-    check(texts.t("ar", "admin_table_freed", table=number) in blob(msgs),
+    check(texts.t("ar", "admin_table_freed", table=number, date=admin._fmt_day(config.today_local(), "ar")) in blob(msgs),
           "والحجز الإداري يُحرَّر بنفس أمر التحرير")
     check(target["id"] not in db.booked_table_ids(
         config.today_local().isoformat()), "فتعود متاحة")
@@ -437,8 +444,8 @@ def main() -> int:                                    # noqa: C901
     target = free_now(number)
     say(boss, "الطاولة %d" % number)
     msgs = say(boss, "اه")
-    check(texts.t("ar", "admin_table_already_free", table=number)
-          in blob(msgs) or texts.t("ar", "admin_table_freed", table=number)
+    check(texts.t("ar", "admin_table_already_free", table=number, date=admin._fmt_day(config.today_local(), "ar"))
+          in blob(msgs) or texts.t("ar", "admin_table_freed", table=number, date=admin._fmt_day(config.today_local(), "ar"))
           in blob(msgs), "«اه» جوابٌ عن السؤال لا تحيّةُ زبون")
     check(texts.t("ar", "greeting_back") not in blob(msgs)
           if texts.t("ar", "greeting_back") else True,
@@ -461,17 +468,17 @@ def main() -> int:                                    # noqa: C901
     say(boss, "الطاولة %d" % number)
     msgs = say(boss, "الطاولة %d متاحة" % other["table_number"])
     check(texts.t("ar", "admin_table_already_free",
-                  table=other["table_number"]) in blob(msgs)
+                  table=other["table_number"], date=admin._fmt_day(config.today_local(), "ar")) in blob(msgs)
           or texts.t("ar", "admin_table_freed",
-                     table=other["table_number"]) in blob(msgs),
+                     table=other["table_number"], date=admin._fmt_day(config.today_local(), "ar")) in blob(msgs),
           "رسالة فيها رقم طاولة أمرٌ جديد لا جواب عن سؤال معلّق")
 
     # --- وراثة فعل الأمر السابق: «وطاولة X كمان»
     print("\n   وراثة الفعل السابق")
     for last, phrase, expect in [
-            ("free", "وطاولة 36 كمان", ("free", 36)),
-            ("block", "وطاولة 36 كمان", ("block", (36, None, None))),
-            (None, "وطاولة 36 كمان", ("clarify_free", 36))]:
+            ("free", "وطاولة 36 كمان", ("free", ([36], None))),
+            ("block", "وطاولة 36 كمان", ("block", ([36], None, None))),
+            (None, "وطاولة 36 كمان", ("clarify_free", ([36], None)))]:
         got = admin_nlu.understand(phrase, last_action=last)
         check(got == expect, "آخر فعل %-5s -> %s" % (last, got))
 
@@ -485,7 +492,7 @@ def main() -> int:                                    # noqa: C901
     msgs = say(boss, "وطاولة %d كمان" % other["table_number"])
     reply = blob(msgs)
     check(texts.t("ar", "admin_table_freed",
-                  table=other["table_number"]) in reply,
+                  table=other["table_number"], date=admin._fmt_day(config.today_local(), "ar")) in reply,
           "«وطاولة %d كمان» ورثت التحرير ونُفِّذت مباشرة"
           % other["table_number"])
     check(texts.t("ar", "admin_free_confirm",
@@ -495,6 +502,136 @@ def main() -> int:                                    # noqa: C901
         config.today_local().isoformat()), "والطاولة تحرّرت فعلاً")
     free_now(number)
     free_now(other["table_number"])
+
+    # ------------------- 6د) قوائم الطاولات والتواريخ وحارس السياق
+    print("\n6د) قوائم الطاولات، التواريخ، وحارس السياق")
+
+    from datetime import timedelta as _td
+    tomorrow = config.today_local() + _td(days=1)
+
+    def clear_table(num, when):
+        tbl = next(t for t in db.all_tables() if t["table_number"] == num)
+        for r in db.reservations_on(when.isoformat()):
+            if r["table_id"] == tbl["id"]:
+                c.table("booking_sessions").delete().eq(
+                    "reservation_id", r["id"]).execute()
+                c.table("reservations").delete().eq("id", r["id"]).execute()
+        return tbl
+
+    def guest_booking(num, when, code):
+        tbl = clear_table(num, when)
+        c.table("reservations").insert({
+            "code": code, "platform": "telegram", "user_id": GUEST_UID,
+            "customer_name": "ضيف", "customer_phone": "0790000000",
+            "party_size": 4, "booking_type": "family", "table_id": tbl["id"],
+            "reservation_date": when.isoformat(),
+            "reservation_at": config.to_utc(
+                booking.local_datetime(when, 22)).isoformat(),
+            "status": "confirmed"}).execute()
+        return tbl
+
+    # --- التاريخ الصريح يُطبَّق فعلاً، لا يُفترض «اليوم»
+    cleanup()
+    t_a = guest_booking(20, tomorrow, "MD0001")
+    t_b = guest_booking(21, tomorrow, "MD0002")
+    check(t_a["id"] in db.booked_table_ids(tomorrow.isoformat()),
+          "الطاولتان محجوزتان بكرا")
+
+    msgs = say(boss, "حرر طاولة 20 و21 بكرا")
+    check(texts.t("ar", "admin_tables_freed", tables="20 و21",
+                  date=admin._fmt_day(tomorrow, "ar")) in blob(msgs),
+          "أمرٌ بطاولتين وتاريخ نُفِّذ دفعةً واحدة")
+    check(t_a["id"] not in db.booked_table_ids(tomorrow.isoformat())
+          and t_b["id"] not in db.booked_table_ids(tomorrow.isoformat()),
+          "الاثنتان تحرّرتا فعلاً يوم بكرا")
+
+    # --- ثلاث طاولات
+    cleanup()
+    three = [guest_booking(n, tomorrow, "MD001%d" % i)
+             for i, n in enumerate((20, 21, 22))]
+    msgs = say(boss, "حرر طاولة 20 و21 و22 بكرا")
+    check(all(t["id"] not in db.booked_table_ids(tomorrow.isoformat())
+              for t in three), "أمرٌ بثلاث طاولات نُفِّذ على الثلاث")
+
+    # --- تاريخ رقمي صريح 2/9
+    cleanup()
+    t_a = guest_booking(20, tomorrow, "MD0020")
+    msgs = say(boss, "حرر طاولة 20 يوم %d/%d" % (tomorrow.day,
+                                                 tomorrow.month))
+    check(t_a["id"] not in db.booked_table_ids(tomorrow.isoformat()),
+          "تاريخ رقمي %d/%d نُفِّذ عليه" % (tomorrow.day, tomorrow.month))
+
+    # --- ما عليها حجز اليوم لكن عليها بكرا: يُسأل ولا يُفترض
+    cleanup()
+    t_a = guest_booking(20, tomorrow, "MD0030")
+    t_b = guest_booking(21, tomorrow, "MD0031")
+    clear_table(20, config.today_local())
+    clear_table(21, config.today_local())
+    msgs = say(boss, "بدي تحول طاولة 20 و21 لمتاح")
+    reply = blob(msgs)
+    check(texts.t("ar", "admin_maybe_other_day", table="20 و21",
+                  date=admin._fmt_day(config.today_local(), "ar"),
+                  other=admin._fmt_day(tomorrow, "ar")) in reply,
+          "سؤالٌ واحد عن اليوم للطاولتين معاً")
+    check(len(msgs) == 1, "لا سؤال مكرّر لكل طاولة (%d رسالة)" % len(msgs))
+    check(t_a["id"] in db.booked_table_ids(tomorrow.isoformat()),
+          "ولم يُحرَّر شيء قبل الجواب")
+
+    # --- والجواب «بكرة مو اليوم» يُنفَّذ على الطاولتين
+    msgs = say(boss, "بكرة مو اليوم")
+    check(texts.t("ar", "admin_tables_freed", tables="20 و21",
+                  date=admin._fmt_day(tomorrow, "ar")) in blob(msgs),
+          "«بكرة مو اليوم» حرّرت الطاولتين معاً")
+    check(t_a["id"] not in db.booked_table_ids(tomorrow.isoformat())
+          and t_b["id"] not in db.booked_table_ids(tomorrow.isoformat()),
+          "الاثنتان تحرّرتا")
+
+    # --- حارس السياق: لا نزول إلى ترحيب الزبون أبداً
+    print("\n   حارس السياق الإداري")
+    greeting = texts.t("ar", "welcome_back") or texts.t("ar", "welcome")
+    check(bool(greeting), "نصّ الترحيب موجود فعلاً")
+
+    cleanup()
+    guest_booking(20, tomorrow, "MD0040")
+    clear_table(20, config.today_local())
+    say(boss, "الطاولة 20 متاحة")          # ينتهي بسؤال عن اليوم
+    for confusing in ["بكرة مو اليوم", "اه", "يعني شو",
+                      "خليها زي ما هي بكرا"]:
+        msgs = say(boss, confusing)
+        reply = blob(msgs)
+        check(greeting not in reply,
+              "«%s» -> لا ترحيب زبون" % confusing)
+        check(texts.t("ar", "btn_menu") not in
+              " ".join(b for m in msgs for b in m["buttons"]),
+              "  ولا أزرار تصفّح")
+
+    # وبعد أمر نُفِّذ وانتهى — التسريب وقع هنا بلا حالة معلّقة
+    cleanup()
+    say(boss, "الطاولة 20 متاحة")
+    msgs = say(boss, "بكرة مو اليوم")
+    check(greeting not in blob(msgs),
+          "شظيّة تاريخ بعد أمر منتهٍ -> لا ترحيب")
+
+    # لكن سؤالاً حقيقياً بلا شظيّة يبقى في مسار الزبون
+    msgs = say(boss, "شو عندكم أكل")
+    check(bool(blob(msgs)), "وسؤال المنيو يبقى يعمل للأدمن")
+    check(not admin_nlu.has_admin_fragment("قديش سعر التبولة"),
+          "سؤال سعر ليس شظيّة إدارية")
+
+    # --- الردّ الإداري بلا لوحة أزرار الزبون
+    print("\n   لوحة أزرار الزبون خارج المحادثة الإدارية")
+    cleanup()
+    plains = []
+
+    class Plain(Fake):
+        def send_text(self, user, text, plain=False):
+            plains.append(plain)
+            sent.append({"to": user.user_id, "text": text, "buttons": []})
+
+    platform_adapter.ADAPTERS["telegram"] = Plain()
+    say(boss, "الطاولة 20 متاحة")
+    check(plains and all(plains), "كل ردٍّ إداري يمسح لوحة الزبون")
+    platform_adapter.ADAPTERS["telegram"] = Fake()
 
     # ------------------------------------------- 7) نبرة الأسئلة
     print("\n7) دفء نبرة أسئلة بداية الحجز")

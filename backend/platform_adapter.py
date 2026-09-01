@@ -61,7 +61,8 @@ def _validate(buttons: list[tuple[str, str]]) -> None:
 class BaseAdapter:
     platform = "base"
 
-    def send_text(self, user: User, text: str) -> None:
+    def send_text(self, user: User, text: str,
+                  plain: bool = False) -> None:
         raise NotImplementedError
 
     def send_buttons(self, user: User, text: str,
@@ -123,9 +124,16 @@ class TelegramAdapter(BaseAdapter):
         if audio:
             telegram_api.send_voice(user.chat_id or user.user_id, audio)
 
-    def send_text(self, user: User, text: str) -> None:
+    def send_text(self, user: User, text: str, plain: bool = False) -> None:
+        """plain=True يزيل لوحة أزرار الزبون بدل أن يتركها معلّقة.
+
+        لوحة الرد في تليجرام تبقى ظاهرة حتى تُستبدل أو تُزال صراحةً،
+        فأزرار «المنيو» و«القائمة الرئيسية» كانت تُلازم أسفلَ محادثةٍ
+        إدارية بحتة. الردّ الإداري يمسحها، ولا يستبدلها بأخرى.
+        """
         self._maybe_voice(user, text)
-        telegram_api.send_message(user.chat_id or user.user_id, text)
+        telegram_api.send_message(user.chat_id or user.user_id, text,
+                                  {"remove_keyboard": True} if plain else None)
 
     def send_buttons(self, user: User, text: str, buttons, nav=None) -> None:
         _validate(buttons)

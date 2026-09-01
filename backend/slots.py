@@ -190,6 +190,8 @@ _WEEKDAYS = {
 }
 _WEEKDAYS = {_n(k): v for k, v in _WEEKDAYS.items()}
 
+_NUMERIC_DATE = re.compile(r"(\d{1,2})\s*[/\-]\s*(\d{1,2})")
+
 _TODAY = ("اليوم", "هاليوم", "الليله", "هالليله", "today", "tonight")
 _TOMORROW = ("بكرا", "بكره", "بكرة", "باكر", "غدا", "الغد", "tomorrow")
 _AFTER_TOMORROW = ("بعد بكرا", "بعد بكره", "بعد باكر", "بعد غد",
@@ -218,6 +220,14 @@ def _date(text: str):
     for word in _TODAY:
         if _n(word) in text:
             return today if today in window else None
+
+    # تاريخ رقمي صريح «2/9» أو «2-9»: يوم/شهر. لا يُقبل إلا داخل نافذة
+    # الحجز، فرقمان بينهما شرطة مائلة قد يكونان أي شيء آخر.
+    for match in _NUMERIC_DATE.finditer(text):
+        num_day, num_month = int(match.group(1)), int(match.group(2))
+        for candidate in days:
+            if candidate.day == num_day and candidate.month == num_month:
+                return candidate
 
     # اسم اليوم يعني أقرب وقوع له داخل النافذة.
     for name, index in _WEEKDAYS.items():
@@ -360,3 +370,9 @@ def hour_from(text: str):
     if digits and len(digits) <= 2:
         return _to_evening(int(digits))
     return None
+
+
+def strip_hour(body: str) -> str:
+    """يمحو موضع الساعة من جسمٍ مطبَّع، لئلا يُقرأ رقمُها شيئاً آخر."""
+    _, span = _hour(body)
+    return (body[:span[0]] + " " + body[span[1]:]) if span else body

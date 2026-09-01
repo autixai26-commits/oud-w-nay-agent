@@ -278,12 +278,17 @@ def main() -> int:                                    # noqa: C901
     sent.clear()
     first_tick = scheduler.tick()
     sent_after_first = len(sent)
+    ours = db.get_reservation(row["id"])
     sent.clear()
     second_tick = scheduler.tick()
-    check(first_tick["reminder"] == 1 and sent_after_first >= 1,
-          "الدورة الأولى أرسلت التذكير")
-    check(second_tick["reminder"] == 0 and not sent,
-          "الدورة الثانية لم ترسل شيئاً")
+    after = db.get_reservation(row["id"])
+    # الفحص على حجزنا لا على عدّاد الدورة: القاعدة مشتركة، وأي حجز آخر
+    # يحين تذكيرُه في اللحظة نفسها يرفع العدّاد بلا خلل في المنطق.
+    check(first_tick["reminder"] >= 1 and sent_after_first >= 1
+          and ours.get("reminder_sent_at"),
+          "الدورة الأولى أرسلت تذكير حجزنا")
+    check(after.get("reminder_sent_at") == ours.get("reminder_sent_at"),
+          "والدورة الثانية لم تمسّه ثانيةً")
 
     # ------------------------------ 8) الحالة المعلّقة تُقيَّم لا تُفرض
     print("\n8) الحالة المعلّقة تُقيَّم عند كل رسالة")
