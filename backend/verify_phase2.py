@@ -52,6 +52,10 @@ class FakeAdapter(platform_adapter.BaseAdapter):
         sent.append({"text": text, "buttons": [], "nav": [],
                      "link": (label, url)})
 
+    def send_album(self, user, paths, caption=""):
+        sent.append({"text": caption, "buttons": [], "nav": [],
+                     "link": None, "album": [p.name for p in paths]})
+
 
 def walk(lang: str) -> dict:
     """يزور كل callback_data قابل للوصول انطلاقاً من القائمة الرئيسية."""
@@ -100,13 +104,34 @@ def main() -> int:
               "أقصى عدد أزرار تنقّل في رسالة: %d (الحد %d)"
               % (worst_nav, platform_adapter.MAX_QUICK_BUTTONS))
 
-        # 2) كل صنف يظهر مرة واحدة على الأقل
-        blob = "\n".join(s["text"] for s in res["screens"])
+        # 2) كل صنف له سطر نصّي بسعره
+        # SPEC 7.5: الزبون صار يرى صوراً، فلا تمرّ أسماء الأصناف في
+        # شاشات التصفّح. لكن النص باقٍ ومستعمَل: منه يبني النموذجُ
+        # سياقَه في الأسئلة الحرة، ومنه يقرأ الأدمن. فالضمانة نفسها
+        # تُفحص عند مصدرها لا عبر أزرار لم تعد تقود إليه.
+        pages_text = []
+        for cat in conversation._tree().values():
+            for sub_slug in cat["subs"]:
+                page = 0
+                while True:
+                    built = conversation.build_items_screen(lang, sub_slug,
+                                                            page)
+                    if not built:
+                        break
+                    pages_text.append(built["text"])
+                    page += 1
+                    if page >= built["pages"]:
+                        break
+        blob = "\n".join(pages_text)
         key = "name_ar" if lang == "ar" else "name_en"
         missing = [m[key] for m in menu_items if m[key] not in blob]
-        check(not missing, "كل الـ%d صنف ظاهرة في التصفّح%s"
+        check(not missing, "كل الـ%d صنف لها سطر نصّي بسعرها%s"
               % (len(menu_items),
                  "" if not missing else " — ناقص: %s" % missing[:5]))
+        # وتدخل هذه الصفحات في فحص التنويه الضريبي أدناه.
+        res["screens"].extend({"data": "text:%d" % i, "text": t,
+                               "buttons": [], "nav": [], "link": None}
+                              for i, t in enumerate(pages_text))
 
         # 3) التنويه الضريبي مع كل سعر
         note = texts.t(lang, "tax_note")

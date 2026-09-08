@@ -18,6 +18,7 @@
 import functools
 import logging
 from datetime import date as Date
+from pathlib import Path
 
 import admin
 import ai
@@ -151,14 +152,37 @@ def _screen_menu_root(adapter, user, lang) -> None:
     ], nav=[(texts.t(lang, "btn_main_menu"), "H")])
 
 
+# SPEC 7.5 — المنيو يُعرض صوراً: مجلد لكل فئة، والترتيب ترتيب أسماء
+# الملفات فهو ترتيب المنيو الورقي نفسه.
+MENU_PHOTOS = Path(__file__).resolve().parent.parent / "assets" / "menu"
+
+
+def menu_photos(group: str) -> list:
+    folder = MENU_PHOTOS / group
+    return sorted(folder.glob("*.jpg")) if folder.is_dir() else []
+
+
 def _screen_group(adapter, user, lang, group) -> None:
-    cats = _cats_of(group)
-    if len(cats) == 1:
-        return _screen_category(adapter, user, lang, cats[0]["slug"])
+    """يرسل ألبوم صور الفئة — SPEC 7.5.
+
+    الأصناف وأسعارها تبقى في القاعدة كما هي: النموذج يجيب عنها في
+    الأسئلة الحرة، والأدمن يراها، وشاشات التصفّح النصية باقية في الكود
+    ويستعملها التدقيق. التغيير عرضٌ لا حذف.
+    """
+    photos = menu_photos(group)
+    if not photos:
+        # لا نترك الزبون أمام شاشة فارغة: النص موجود، والنموذج يجيب.
+        adapter.send_buttons(user, texts.t(lang, "menu_photos_missing"), [],
+                             nav=[(texts.t(lang, "btn_back"), "M"),
+                                  (texts.t(lang, "btn_main_menu"), "H")])
+        return None
+
+    adapter.send_album(user, photos, texts.t(lang, "menu_photos_%s" % group))
     adapter.send_buttons(
-        user, texts.t(lang, "pick_category"),
-        [(_label(c, lang), "M:c:%s" % c["slug"]) for c in cats],
-        nav=[(texts.t(lang, "btn_back"), "M")])
+        user, texts.t(lang, "menu_photos_after"),
+        [(texts.t(lang, "btn_book"), "B")],
+        nav=[(texts.t(lang, "btn_back"), "M"),
+             (texts.t(lang, "btn_main_menu"), "H")])
     return None
 
 

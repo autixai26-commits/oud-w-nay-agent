@@ -49,6 +49,10 @@ class Fake(platform_adapter.BaseAdapter):
         sent.append({"text": text, "buttons": [], "nav": [],
                      "link": (label, url)})
 
+    def send_album(self, user, paths, caption=""):
+        sent.append({"text": caption, "buttons": [], "nav": [],
+                     "link": None, "album": [p.name for p in paths]})
+
 
 def cleanup() -> None:
     c = db.client()

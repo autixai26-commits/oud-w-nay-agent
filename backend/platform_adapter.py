@@ -79,6 +79,10 @@ class BaseAdapter:
         """زر يفتح رابطاً خارجياً. يقابله في واتساب زر cta_url."""
         raise NotImplementedError
 
+    def send_album(self, user: User, paths, caption: str = "") -> None:
+        """ألبوم صور واحد. يقابله في واتساب إرسال صور متتابعة."""
+        raise NotImplementedError
+
 
 class TelegramAdapter(BaseAdapter):
     platform = "telegram"
@@ -134,6 +138,25 @@ class TelegramAdapter(BaseAdapter):
         self._maybe_voice(user, text)
         telegram_api.send_message(user.chat_id or user.user_id, text,
                                   {"remove_keyboard": True} if plain else None)
+
+    # ذاكرة file_id: تليجرام يعيد معرّفاً لكل صورة رُفعت، وإعادة استعماله
+    # تُرسل الألبوم بلا رفع بايت واحد. الذاكرة داخل العملية فتفرغ مع كل
+    # نشر — وهذا مقبول: الرفع الكامل يقع مرة واحدة بعد النشر لا غير.
+    _photo_ids: dict = {}
+
+    def send_album(self, user: User, paths, caption: str = "") -> None:
+        paths = list(paths)
+        if not paths:
+            return
+        photos = [(p.name, self._photo_ids.get(str(p)) or p.read_bytes())
+                  for p in paths]
+        result = telegram_api.send_media_group(
+            user.chat_id or user.user_id, photos, caption)
+        # أكبر مقاس لكل صورة هو آخر عنصر في photo[]، وهو ما نعيد إرساله.
+        for path, message in zip(paths, result.get("result") or []):
+            sizes = message.get("photo") or []
+            if sizes:
+                self._photo_ids[str(path)] = sizes[-1]["file_id"]
 
     def send_buttons(self, user: User, text: str, buttons, nav=None) -> None:
         _validate(buttons)

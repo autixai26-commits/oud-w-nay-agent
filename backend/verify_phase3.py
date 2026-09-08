@@ -50,6 +50,10 @@ class Fake(platform_adapter.BaseAdapter):
         sent.append({"text": text, "buttons": [], "nav": [],
                      "link": (label, url)})
 
+    def send_album(self, user, paths, caption=""):
+        sent.append({"text": caption, "buttons": [], "nav": [],
+                     "link": None, "album": [p.name for p in paths]})
+
 
 def cleanup() -> None:
     c = db.client()
@@ -166,12 +170,20 @@ def main() -> int:
     check(not booking.is_happy_hour(booking.local_datetime(friday, 15)),
           "3 عصراً يوم جمعة خارجه — الجمعة مستثناة")
     cleanup()
+    # اليوم والساعة يُختاران وقت التشغيل لا يُثبَّتان: «الثلاثاء 3 عصراً»
+    # ساعةٌ ماضية إن صادف التشغيلُ ثلاثاءً بعد الثالثة، فيرفضها التدفق
+    # بحق ويسقط الفحص بلا خلل. نأخذ أول ساعة متاحة فعلاً داخل الهابي أور.
+    hh_day, hh_hour = next(
+        (d, h) for d in days for h in booking.available_hours(d)
+        if booking.is_happy_hour(booking.local_datetime(d, h)))
     msgs = run_flow(user, "ar", [
-        "B", "B:t:family", "B:d:%s" % tuesday.isoformat(),
-        "B:p:noon", "B:h:15", "B:n:4", "#ليان", "#0791234567"])
+        "B", "B:t:family", "B:d:%s" % hh_day.isoformat(),
+        "B:p:%s" % booking.period_of(hh_hour), "B:h:%d" % hh_hour,
+        "B:n:4", "#ليان", "#0791234567"])
     blob = "\n".join(m["text"] for m in msgs)
     check(texts.t("ar", "happy_hour_notice") in blob,
-          "التنويه ظهر قبل الرابط")
+          "التنويه ظهر قبل الرابط (%s الساعة %d)"
+          % (hh_day.isoformat(), hh_hour))
 
     # -------------------------------------------------- 6) السعة
     print("\n6) الطاولات المعروضة حسب السعة (SPEC 5.7)")

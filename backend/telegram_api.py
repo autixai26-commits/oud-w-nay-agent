@@ -116,3 +116,42 @@ def send_voice(chat_id, audio: bytes, caption: str = "") -> dict:
     except Exception as exc:  # noqa: BLE001
         log.error("sendVoice استثناء: %s", type(exc).__name__)
         return {"ok": False}
+
+
+def send_media_group(chat_id, photos, caption: str = "") -> dict:
+    """يرسل ألبوم صور واحداً — SPEC 7.5.
+
+    ``photos`` قائمة من (اسم، بايتات-أو-file_id). البايتات تُرفع
+    بـmultipart وتُشار إليها بـattach://، وأما ما كان file_id فيُمرَّر
+    نصّاً بلا رفع — وهو ما يجعل الإرسال الثاني فورياً.
+
+    التعليق يوضع على أول صورة فقط: تليجرام يعرض تعليق الألبوم مرة
+    واحدة، ووضعه على كلٍّ منها يكرّره تحت كل صورة.
+    """
+    import json
+
+    media, files = [], {}
+    for index, (name, blob) in enumerate(photos):
+        if isinstance(blob, str):                 # file_id محفوظ
+            item = {"type": "photo", "media": blob}
+        else:
+            key = "file%d" % index
+            files[key] = (name, blob, "image/jpeg")
+            item = {"type": "photo", "media": "attach://%s" % key}
+        if index == 0 and caption:
+            item["caption"] = caption[:1024]
+        media.append(item)
+
+    data = {"chat_id": str(chat_id), "media": json.dumps(media,
+                                                        ensure_ascii=False)}
+    try:
+        with httpx.Client(timeout=httpx.Timeout(120.0, connect=10.0)) as c:
+            r = c.post("%s/sendMediaGroup" % _BASE, data=data,
+                       files=files or None)
+        out = r.json()
+        if not out.get("ok"):
+            log.error("sendMediaGroup فشل: %s", out.get("description"))
+        return out
+    except Exception as exc:  # noqa: BLE001
+        log.error("sendMediaGroup استثناء: %s", type(exc).__name__)
+        return {"ok": False}
