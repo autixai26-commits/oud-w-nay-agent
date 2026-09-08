@@ -86,6 +86,11 @@ def health() -> dict:
             # بدون ffmpeg يتحوّل الرد الصوتي إلى نص بصمت، فنكشفه هنا
             # بدل أن نكتشفه من شكوى زبون (SPEC 9).
             "ffmpeg": voice.ffmpeg_ready(),
+            # وصور المنيو تسقط بنفس الصمت: الزر يردّ «غير متوفرة» إن لم
+            # تصل الملفات إلى الحاوية، وهو ما وقع فعلاً حين كانت خارج
+            # سياق البناء. العدد هنا يكشف ذلك من الخارج بلا انتظار شكوى.
+            "menu_photos": {g: len(conversation.menu_photos(g))
+                            for g in ("food", "drinks", "shisha")},
             "voice_keys": voice.available(),
             "scheduler_seconds": scheduler.interval_seconds()}
 

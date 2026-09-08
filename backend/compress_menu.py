@@ -3,8 +3,8 @@
 
     python backend/compress_menu.py
 
-يقرأ الأصول من assets/menu/original/ وفق MAPPING أدناه، ويكتب الصور
-الجاهزة في assets/menu/{food,drinks,shisha}/ بترقيم يحفظ ترتيب المنيو.
+يقرأ الأصول من backend/assets/menu/original/ وفق MAPPING أدناه، ويكتب الصور
+الجاهزة في backend/assets/menu/{food,drinks,shisha}/ بترقيم يحفظ ترتيب المنيو.
 
 **JPEG لا WebP.** تليجرام يعامل WebP كملصق (sticker) لا كصورة، فـ
 sendPhoto وsendMediaGroup يرفضانه أو يعرضانه خطأً. صور الموقع WebP لأن
@@ -21,9 +21,10 @@ from pathlib import Path
 
 from PIL import Image
 
-ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "assets" / "menu" / "original"
-OUT = ROOT / "assets" / "menu"
+# داخل backend/ لا في جذر المستودع: سياق بناء Docker هو backend/ وحده.
+BASE = Path(__file__).resolve().parent / "assets" / "menu"
+SRC = BASE / "original"
+OUT = BASE
 
 MAX_SIDE = 1600         # أطول ضلع؛ تليجرام يعرض حتى 1280 ويكبّر عند الزوم
 MAX_KB = 400            # ميزانية الصورة الواحدة

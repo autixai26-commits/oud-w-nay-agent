@@ -22,7 +22,7 @@ desktop.ini
 web/images/original/
 # أصول صور المنيو: الملفات الجاهزة في assets/menu/<الفئة>/ متطابقة
 # معها بالبايت هذه الدورة (لم تحتج إعادة ترميز)، فلا نخزّنها مرتين.
-assets/menu/original/
+backend/assets/menu/original/
 
 # ----- ملفات مؤقتة للصوت -----
 *.ogg

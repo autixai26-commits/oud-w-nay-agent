@@ -8,7 +8,7 @@
      يجيب عن الأسعار والأدمن يراها. التغيير عرضٌ لا حذف.
 """
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import conversation
 import db
@@ -67,6 +67,75 @@ def main() -> int:                                    # noqa: C901
 
     platform_adapter.ADAPTERS["telegram"] = Fake()
     user = User("telegram", UID, UID)
+
+    # -------------------------------- 0) هل تصل الصور إلى الحاوية؟
+    # هذا الفحص هو الذي كان غائباً. الستّة والخمسون فحصاً الباقية نجحت
+    # كلها بينما الزرّ في الإنتاج يردّ «الصور غير متوفرة»: كانت الصور في
+    # جذر المستودع، وسياقُ بناء Docker هو backend/ وحده، فلم تدخل
+    # الصورة أصلاً. ومع ذلك مرّت الفحوص لأنها تقرأ شجرة التطوير لا
+    # الحاوية. فالفحص هنا يحاكي ما ينسخه Docker فعلاً.
+    print("\n0) وصول الصور إلى صورة Docker")
+    import shutil
+    import tempfile
+
+    context = Path(__file__).resolve().parent          # سياق البناء
+    check((context / "Dockerfile").is_file(),
+          "سياق البناء هو %s وفيه Dockerfile" % context.name)
+    check(conversation.MENU_PHOTOS.is_relative_to(context),
+          "مسار الصور داخل سياق البناء: %s"
+          % conversation.MENU_PHOTOS.relative_to(context.parent))
+
+    ignore = context / ".dockerignore"
+    patterns = []
+    if ignore.is_file():
+        patterns = [ln.strip() for ln in
+                    ignore.read_text(encoding="utf-8").splitlines()
+                    if ln.strip() and not ln.startswith("#")]
+
+    def excluded(rel: str) -> bool:
+        """هل يستبعد .dockerignore هذا المسار؟ — مطابقة الأنماط المستعملة."""
+        import fnmatch
+        for pattern in patterns:
+            clean = pattern.rstrip("/")
+            if rel == clean or rel.startswith(clean + "/"):
+                return True
+            if fnmatch.fnmatch(rel, clean) or fnmatch.fnmatch(
+                    PurePosixPath(rel).name, clean):
+                return True
+        return False
+
+    # نبني شجرةً كما ينسخها COPY . . ثم نستورد منها المسار
+    staged, skipped = 0, 0
+    with tempfile.TemporaryDirectory() as tmp:
+        app = Path(tmp) / "app"                        # WORKDIR /app
+        for src in context.rglob("*"):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(context).as_posix()
+            if excluded(rel):
+                skipped += 1
+                continue
+            dest = app / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dest)
+            staged += 1
+
+        # المسار كما يحسبه الكود من داخل الحاوية: parent لا parent.parent
+        in_container = (app / "conversation.py").resolve().parent / "assets" \
+            / "menu"
+        check(in_container.is_dir(),
+              "مجلد الصور موجود داخل الحاوية: /app/assets/menu")
+        for group in GROUPS:
+            found = sorted((in_container / group).glob("*.jpg"))
+            here = conversation.menu_photos(group)
+            check(len(found) == len(here) and found,
+                  "  %s: %d صورة وصلت الحاوية (محلياً %d)"
+                  % (group, len(found), len(here)))
+    print("  نُسخ %d ملفاً، واستُبعد %d بـ.dockerignore" % (staged, skipped))
+
+    # وأصول الصور لا تدخل — نسخة مكرّرة بلا فائدة في الإنتاج
+    check(excluded("assets/menu/original/menu-01.jpg"),
+          "والأصول مستبعدة، فلا تتضاعف الصورة")
 
     # ------------------------------------------------- 1) الأصول
     print("\n1) ملفات الصور")

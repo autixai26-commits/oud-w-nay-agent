@@ -154,7 +154,14 @@ def _screen_menu_root(adapter, user, lang) -> None:
 
 # SPEC 7.5 — المنيو يُعرض صوراً: مجلد لكل فئة، والترتيب ترتيب أسماء
 # الملفات فهو ترتيب المنيو الورقي نفسه.
-MENU_PHOTOS = Path(__file__).resolve().parent.parent / "assets" / "menu"
+#
+# المسار نسبةً إلى ملف الكود نفسه، لا إلى جذر المستودع. الفرق ليس
+# تجميلاً: سياق بناء صورة Docker هو backend/ وحده، والكود يعيش في
+# /app داخل الحاوية لا في /app/backend. فـparent.parent كانت تعطي
+# جذر المستودع محلياً و«/» على الخادم — صدفةٌ تُخفي العطل في كل فحص
+# محلي وتكشفه أول ضغطة زر من زبون. ولذلك سكنت الصور داخل backend/:
+# ما لا يدخل سياق البناء لا يصل الإنتاج مهما صحّ مساره.
+MENU_PHOTOS = Path(__file__).resolve().parent / "assets" / "menu"
 
 
 def menu_photos(group: str) -> list:
