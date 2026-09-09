@@ -144,19 +144,34 @@ class TelegramAdapter(BaseAdapter):
     # نشر — وهذا مقبول: الرفع الكامل يقع مرة واحدة بعد النشر لا غير.
     _photo_ids: dict = {}
 
+    @staticmethod
+    def _photo_key(path) -> tuple:
+        """مفتاح يتغيّر بتغيّر الملف لا باسمه وحده.
+
+        المسار وحده مفتاحٌ خادع: استبدال صورة باسمها نفسه يُبقي المفتاح
+        فيُعاد إرسال القديمة المحفوظة. الحجم وزمن التعديل يجعلان المفتاح
+        تابعاً للمحتوى، فالاستبدال يُبطل الذاكرة من تلقائه.
+        """
+        try:
+            stat = path.stat()
+            return (str(path), stat.st_size, stat.st_mtime_ns)
+        except OSError:
+            return (str(path), 0, 0)
+
     def send_album(self, user: User, paths, caption: str = "") -> None:
         paths = list(paths)
         if not paths:
             return
-        photos = [(p.name, self._photo_ids.get(str(p)) or p.read_bytes())
-                  for p in paths]
+        keys = [self._photo_key(p) for p in paths]
+        photos = [(p.name, self._photo_ids.get(k) or p.read_bytes())
+                  for p, k in zip(paths, keys)]
         result = telegram_api.send_media_group(
             user.chat_id or user.user_id, photos, caption)
         # أكبر مقاس لكل صورة هو آخر عنصر في photo[]، وهو ما نعيد إرساله.
-        for path, message in zip(paths, result.get("result") or []):
+        for key, message in zip(keys, result.get("result") or []):
             sizes = message.get("photo") or []
             if sizes:
-                self._photo_ids[str(path)] = sizes[-1]["file_id"]
+                self._photo_ids[key] = sizes[-1]["file_id"]
 
     def send_buttons(self, user: User, text: str, buttons, nav=None) -> None:
         _validate(buttons)

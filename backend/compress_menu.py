@@ -28,32 +28,34 @@ OUT = BASE
 
 MAX_SIDE = 1600         # أطول ضلع؛ تليجرام يعرض حتى 1280 ويكبّر عند الزوم
 MAX_KB = 400            # ميزانية الصورة الواحدة
-QUALITY = 85            # عند الحاجة لإعادة الترميز فقط
+# أفضل جودة تسع الميزانية، لا جودة ثابتة. المصدر قد يكون PNG بلا فقد،
+# وتحويله بجودة 85 يترك حلقات حول الحروف العربية الدقيقة بلا داعٍ ما
+# دامت الميزانية تتّسع لأعلى. نبدأ من الأعلى وننزل حتى يدخل الحدّ.
+QUALITY_LADDER = (95, 92, 88, 85, 80, 75)
 
-# ترتيب المنيو مقصود: الشوربات فالمقبلات الباردة فالساخنة فالأطباق
-# الرئيسية فالحلويات — كما يُقرأ المنيو الورقي.
+# ترتيب المنيو مقصود: الشوربات والسلطات فالمقبلات الباردة فالساخنة
+# فالأطباق الرئيسية فالبحريات فالحلويات — كما يُقرأ المنيو الورقي.
 MAPPING = {
     "food": [
-        ("menu-04.jpg", "01-soups-cold-appetizers"),
-        ("menu-10.jpg", "02-cold-appetizers-salads"),
-        ("menu-08.jpg", "03-hot-appetizers-1"),
-        ("menu-09.jpg", "04-hot-appetizers-2"),
-        ("menu-05.jpg", "05-main-grills"),
-        ("menu-07.jpg", "06-main-pasta-seafood"),
-        ("menu-02.jpg", "07-sweets"),
+        ("menu-02.png", "01-soups-salads"),
+        ("menu-01.png", "02-cold-appetizers"),
+        ("menu-04.png", "03-hot-appetizers"),
+        ("menu-03.png", "04-main-dishes"),
+        ("menu-05.png", "05-seafood"),
+        ("menu-06.png", "06-desserts"),
     ],
     "drinks": [
-        ("menu-01.jpg", "01-hot-drinks"),
-        ("menu-06.jpg", "02-cold-drinks-juices"),
+        ("menu-08.png", "01-hot-drinks"),
+        ("menu-07.png", "02-cold-drinks-juices"),
     ],
     "shisha": [
-        ("menu-03.jpg", "01-hookah"),
+        ("menu-09.png", "01-hookah"),
     ],
 }
 
 
 def prepare(src: Path, dest: Path) -> tuple:
-    """يعيد (الحجم بالكيلوبايت، هل أُعيد الترميز)."""
+    """يعيد (الحجم بالكيلوبايت، الجودة المستعملة أو None إن نُسخت)."""
     image = Image.open(src)
     too_big = max(image.size) > MAX_SIDE
     too_heavy = src.stat().st_size / 1024 > MAX_KB
@@ -61,16 +63,31 @@ def prepare(src: Path, dest: Path) -> tuple:
     if not too_big and not too_heavy and src.suffix.lower() in (".jpg",
                                                                 ".jpeg"):
         shutil.copyfile(src, dest)
-        return dest.stat().st_size / 1024, False
+        return dest.stat().st_size / 1024, None
 
-    image = image.convert("RGB")
+    # JPEG بلا قناة شفافية، فتُسطَّح على أبيض لا تُسقَط: إسقاطها يحوّل
+    # الشفاف إلى أسود. وخلفية المنيو فاتحة أصلاً فالأبيض هو الصحيح.
+    if image.mode in ("RGBA", "LA", "P"):
+        image = image.convert("RGBA")
+        flat = Image.new("RGB", image.size, (255, 255, 255))
+        flat.paste(image, mask=image.getchannel("A"))
+        image = flat
+    else:
+        image = image.convert("RGB")
+
+    # لا تكبير: التكبير لا يضيف معلومة، ويكبّر الحجم ويوهم بدقّة ليست فيه.
     if too_big:
         ratio = MAX_SIDE / max(image.size)
         image = image.resize(
             (round(image.width * ratio), round(image.height * ratio)),
             Image.LANCZOS)
-    image.save(dest, "JPEG", quality=QUALITY, optimize=True, progressive=True)
-    return dest.stat().st_size / 1024, True
+
+    for quality in QUALITY_LADDER:
+        image.save(dest, "JPEG", quality=quality, optimize=True,
+                   progressive=True)
+        if dest.stat().st_size / 1024 <= MAX_KB:
+            return dest.stat().st_size / 1024, quality
+    return dest.stat().st_size / 1024, QUALITY_LADDER[-1]
 
 
 def main() -> int:
@@ -90,11 +107,11 @@ def main() -> int:
                 missing.append(str(source))
                 continue
             dest = target / ("%s.jpg" % out_name)
-            size, recoded = prepare(source, dest)
+            size, quality = prepare(source, dest)
             total += size
             print("%-8s %-26s %6.0f KB %10s"
                   % (group, dest.name, size,
-                     "أُعيد ترميزها" if recoded else "نُسخت كما هي"))
+                     "جودة %d" % quality if quality else "نُسخت كما هي"))
 
     print("-" * 58)
     print("المجموع: %.0f KB في %d صورة"

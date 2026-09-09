@@ -161,6 +161,29 @@ def main() -> int:                                    # noqa: C901
               "  والترتيب ترتيب أسماء الملفات — ترتيب المنيو الورقي")
     print("  المجموع: %.0f KB" % total)
 
+    # -------------------------- 1ب) ذاكرة file_id تتبع المحتوى
+    # استبدال صورة باسمها نفسه كان يُبقي المفتاح، فيُعاد إرسال
+    # القديمة المحفوظة لدى تليجرام. المفتاح الآن يتبع الحجم وزمن
+    # التعديل، فأي تغيير يُبطله من تلقائه.
+    print(chr(10) + "1ب) ذاكرة file_id تُبطَل عند استبدال الصورة")
+    import os
+    import time as _time
+
+    sample = conversation.menu_photos("shisha")[0]
+    telegram = platform_adapter.TelegramAdapter
+    before = telegram._photo_key(sample)
+    check(before[0] == str(sample), "المفتاح يحمل المسار")
+    check(before == telegram._photo_key(sample),
+          "وثابت ما دام الملف لم يتغير")
+
+    # نلمس الملف كما يفعل استبداله، ثم نعيد زمنه كما كان
+    stat = sample.stat()
+    os.utime(sample, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))
+    after = telegram._photo_key(sample)
+    os.utime(sample, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    check(after != before, "ويتغيّر حال تغيّر الملف — فلا تُرسل نسخة قديمة")
+    check(telegram._photo_key(sample) == before, "وعاد كما كان")
+
     # ------------------------------------- 2) شاشة المنيو: ثلاثة أزرار
     print("\n2) زر المنيو -> ثلاث فئات")
     msgs = press(user, "M")
