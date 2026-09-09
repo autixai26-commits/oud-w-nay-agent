@@ -100,6 +100,12 @@ _HOUR_SUFFIX = re.compile(
     r"العصر|عصرا|بالعصر|الظهر|ظهرا|بالظهر|صباحا|الصبح)")
 _AM = re.compile(r"\b(?:am|a\.m\.?|صباحا|الصبح)\b")
 
+# «8:30» وقتٌ لا رقم. النقطتان وحدهما مرساةٌ كافية، والنقطة مستثناة
+# عمداً: «3.25» سعرٌ لا الثالثة وخمس وعشرون دقيقة. والحجز على رأس
+# الساعة (SPEC 6.1.4)، فتُقرأ الساعة وتُهمل الدقائق — والملخّص يعرض
+# «8:00» قبل التأكيد فيرى الزبون ما حُجز له.
+_HOUR_CLOCK = re.compile(r"(?<!\d)(\d{1,2})\s*[:٪:]\s*([0-5]?\d)(?!\d)")
+
 _PERIOD_WORDS = (
     ("noon", ("الظهر", "ظهرا", "بالظهر", "العصر", "عصرا", "بالعصر",
               "بعد الظهر", "noon", "afternoon")),
@@ -126,6 +132,10 @@ def _to_evening(hour):
 
 def _hour(text: str):
     morning = _AM.search(text) is not None
+    clock = _HOUR_CLOCK.search(text)
+    if clock:
+        return (None if morning else _to_evening(int(clock.group(1))),
+                clock.span())
     for pattern in (_HOUR_ANCHORED, _HOUR_SUFFIX):
         match = pattern.search(text)
         if not match:

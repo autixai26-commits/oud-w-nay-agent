@@ -127,12 +127,6 @@ def _digits_only(text: str) -> str:
 
 
 # --------------------------------------------------------------- الشاشات
-def _screen_language(adapter, user) -> None:
-    adapter.send_buttons(user, texts.t("ar", "choose_language"),
-                         [(texts.AR["btn_lang_ar"], "L:ar"),
-                          (texts.AR["btn_lang_en"], "L:en")])
-
-
 def _screen_main(adapter, user, lang, greeting=False) -> None:
     _save(user, state="main", data={})
     text = texts.t(lang, "welcome" if greeting else "main_menu")
@@ -671,18 +665,6 @@ def handle_callback(user: User, data: str, lang: str) -> None:
     parts = data.split(":")
     head = parts[0]
 
-    if head == "L":
-        chosen = parts[1] if len(parts) > 1 and parts[1] in ("ar", "en") else "ar"
-        db.save_user_state(user.platform, user.user_id, language=chosen)
-        adapter.send_text(user, texts.t(chosen, "language_set"))
-        return _screen_main(adapter, user, chosen, greeting=True)
-
-    if head == "X":
-        flipped = "en" if lang == "ar" else "ar"
-        db.save_user_state(user.platform, user.user_id, language=flipped)
-        adapter.send_text(user, texts.t(flipped, "language_set"))
-        return _screen_main(adapter, user, flipped)
-
     if head == "H":
         return _screen_main(adapter, user, lang)
 
@@ -719,10 +701,21 @@ def handle_callback(user: User, data: str, lang: str) -> None:
             return _screen_items(adapter, user, lang, parts[2], page)
         return _screen_menu_root(adapter, user, lang)
 
+    # وجهة مجهولة: لا تُفهم فلا تُنفَّذ — لكنها لا تهدم تدفقاً قائماً.
+    # مسحُ الحالة والعودة للترحيب يضيّع على الزبون كل ما أجابه لمجرّد
+    # ضغطة زر قديم أو بيانات مشوّهة، فنعيد طرح سؤاله المعلّق بدلها.
+    current = _state(user).get("state") or ""
+    if current in FLOW_QUESTION_STATES:
+        return _advance(adapter, user, lang, _data(user))
     return _screen_main(adapter, user, lang)
 
 
 _INPUT_STATES = (ST_NAME, ST_PHONE, ST_LG_SIZE, ST_LG_OCCASION)
+
+# حالات فيها سؤال معلّق بأزرار. bk_await_table ليست منها: الرابط أُرسل
+# والتدفق انتهى.
+FLOW_QUESTION_STATES = ("bk_type", "bk_date", "bk_period", "bk_hour",
+                        "bk_party")
 
 
 def _starts_over(state: str, value: str) -> bool:
@@ -904,6 +897,20 @@ def handle_text(user: User, text: str, lang) -> None:
         fresh = {}
         _apply_slots(fresh, found)
         return _advance(adapter, user, lang, fresh)
+
+    # تدفق حجز قائم: يُجاب السؤال ثم **يُعاد طرح السؤال المعلّق**، ولا
+    # ينتهي الأمر عند ردٍّ عام بأزرار البداية.
+    #
+    # هذا نظير حارس سياق الأدمن، مطبَّقاً على مسار الزبون. وقع فعلاً:
+    # زبون في تدفق تعديل كتب «8:30» جواباً عن سؤال الوقت، فلم تُفهم
+    # الجملة فسقطت إلى الردّ الحر، فردّ النموذج بترحيب — وضاع الحجز
+    # والتعديل معاً. الأصل أن السؤال المعلّق لا يضيع مهما كان الوارد.
+    #
+    # ويُستثنى bk_await_table: الرابط أُرسل والتدفق انتهى، وإعادة
+    # التقدّم فيه تُنشئ جلسة حجز ثانية.
+    if current in FLOW_QUESTION_STATES:
+        adapter.send_text(user, ai.reply_to(stripped, lang))
+        return _advance(adapter, user, lang, _data(user))
 
     # سؤال حر: القواعد الثابتة تُفرض داخل ai.reply_to قبل النموذج.
     adapter.send_buttons(user, ai.reply_to(stripped, lang), [],

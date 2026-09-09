@@ -219,6 +219,96 @@ def main() -> int:                                    # noqa: C901
     check(conversation._data(user).get("name") != "لا خليها 6 اشخاص",
           "ولم تُسجَّل اسماً")
 
+    # ------------------ 4ب) تدفق قائم لا ينتهي عند شاشة ترحيب
+    print("\n4ب) التدفق القائم لا يُقطع بشاشة ترحيب")
+    welcome = texts.t("ar", "welcome")
+    check(bool(welcome), "نصّ الترحيب موجود فعلاً")
+
+    # الوقت بصيغة الساعة — الحالة الحرفية التي أسقطت التعديل
+    for raw, want in (("8:30", 20), ("8:00", 20), ("7:45", 19),
+                      ("٨:٣٠", 20), ("at 8:30", 20)):
+        check(slots.extract(raw).get("hour") == want,
+              "«%s» -> %s" % (raw, slots.extract(raw).get("hour")))
+    # والسعر ليس وقتاً: النقطة ليست النقطتين
+    check("hour" not in slots.extract("قديش سعر التبولة 3.25"),
+          "«3.25» سعرٌ لا وقت")
+    check("hour" not in slots.extract("الفتوشيني 7.500"),
+          "«7.500» سعرٌ لا وقت")
+    check("hour" not in slots.extract("9:30 صباحا"),
+          "«9:30 صباحاً» خارج الدوام")
+
+    # رسالة غير مفهومة وسط سؤال معلّق: يُجاب ثم يُعاد السؤال
+    for state_seed, question in (
+            (["#بدي احجز"], "ask_booking_type"),
+            (["#بدي احجز", "B:t:family"], "ask_date"),
+            (["#بدي احجز بكرا", "B:t:family"], "ask_period")):
+        cleanup()
+        run(user, "ar", state_seed)
+        before = conversation._state(user).get("state")
+        # رسالة بلا أي إشارة حجز: «شو الجو اليوم» تحمل تاريخاً
+        # فتملأ الحقل بحق، ولا تقيس ما نريد قياسه هنا.
+        msgs = run(user, "ar", ["#في واي فاي عندكم"])
+        blob = " | ".join(m["text"] or "" for m in msgs)
+        check(welcome not in blob,
+              "[%s] لا شاشة ترحيب" % before)
+        check(texts.t("ar", question) in blob,
+              "  وأُعيد طرح السؤال المعلّق (%s)" % question)
+        check(conversation._state(user).get("state") == before,
+              "  والحالة كما كانت")
+
+    # ووجهة مجهولة لا تهدم التدفق
+    cleanup()
+    run(user, "ar", ["#بدي احجز بكرا", "B:t:family"])
+    before = conversation._state(user).get("state")
+    msgs = run(user, "ar", ["ZZZ:unknown:9"])
+    blob = " | ".join(m["text"] or "" for m in msgs)
+    check(welcome not in blob, "وجهة مجهولة: لا شاشة ترحيب")
+    check(conversation._state(user).get("state") == before,
+          "  والحالة محفوظة")
+
+    # ------------- 4ج) التعديل يرث ويمضي للرابط — السيناريو الحرفي
+    print("\n4ج) تدفق التعديل: يرث الحقول ويصل الرابط")
+    cleanup()
+    day = config.today_local()
+    tbl = next(t for t in db.all_tables() if t["hall"] == "narrow")
+    for r in db.reservations_on(day.isoformat()):
+        if r["table_id"] == tbl["id"]:
+            db.client().table("booking_sessions").delete().eq(
+                "reservation_id", r["id"]).execute()
+            db.client().table("reservations").delete().eq(
+                "id", r["id"]).execute()
+    original = db.client().table("reservations").insert({
+        "code": "EDIT01", "platform": "telegram", "user_id": UID,
+        "customer_name": "أسامة", "customer_phone": "0790000000",
+        "party_size": 2, "booking_type": "family", "table_id": tbl["id"],
+        "reservation_date": day.isoformat(),
+        "reservation_at": config.to_utc(
+            booking.local_datetime(day, 20)).isoformat(),
+        "status": "pending"}).execute().data[0]
+
+    msgs = run(user, "ar", ["R:e:%d" % original["id"]])
+    check(asked(msgs, "ask_date"), "التعديل بدأ بسؤال اليوم")
+    check(not asked(msgs, "ask_party") and not asked(msgs, "ask_name"),
+          "  ولم يُسأل عن العدد ولا الاسم — موروثان")
+
+    msgs = run(user, "ar", ["#اليوم"])
+    check(asked(msgs, "ask_period"), "ثم سؤال الوقت")
+
+    msgs = run(user, "ar", ["#8:30"])
+    blob = " | ".join(m["text"] or "" for m in msgs)
+    check(welcome not in blob, "«8:30» لا تُعيده لشاشة الترحيب")
+    check(any(m.get("link") for m in msgs), "بل يصل رابط اختيار الطاولة")
+    data = conversation._data(user)
+    check(data.get("hour") == 20 and data.get("party") == 2
+          and data.get("name") == "أسامة" and data.get("editing") == "EDIT01",
+          "والحقول الموروثة سليمة: %s"
+          % {k: data.get(k) for k in ("hour", "party", "name", "editing")})
+
+    sessions = db.client().table("booking_sessions").select("token").eq(
+        "user_id", UID).execute().data
+    check(len(sessions) == 1, "وجلسة حجز واحدة لا أكثر")
+    cleanup()
+
     # ------------------------------------------------- 5) اللغة
     print("\n5) لغة الرد تتبع آخر رسالة")
     check(texts.language_signal("بكرا") == "ar", "«بكرا» -> ar")
